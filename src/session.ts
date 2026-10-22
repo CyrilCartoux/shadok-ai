@@ -1,6 +1,6 @@
 import pty from "node-pty";
 import xterm from "@xterm/headless";
-import { idleStep, settleStep, DIALOG_HOLD_MS, screenShowsWork, inputText, describeStuckScreen, typeIntoBox } from "./detect.js";
+import { idleStep, settleStep, DIALOG_HOLD_MS, screenShowsWork, inputText, boxText, describeStuckScreen, typeIntoBox } from "./detect.js";
 
 const { Terminal } = xterm;
 
@@ -204,9 +204,14 @@ export class PtyPilot {
       throw this.submitError("the text never appeared in the input box");
     }
     await sleep(200);
-    // Sent once the input box is empty again (or the spinner is up) — robust to
-    // the bracketed-paste race and to collapsed pastes.
-    const submitted = (s: string) => screenShowsWork(s) || inputText(s) === "";
+    // Sent once the input box is empty again (or the spinner is up). Requiring
+    // it to be truly empty makes the Enter retry robust to the bracketed-paste
+    // race, and works for collapsed pastes (whose text is never on screen).
+    // The WHOLE box, not its first line: a prompt that wrapped leaves its tail
+    // on continuation lines, and `inputText` would read the emptied first line
+    // as a box that is gone while the rest of the message is still sitting
+    // there, unsent.
+    const submitted = (s: string) => screenShowsWork(s) || boxText(s) === "";
     for (let attempt = 0; attempt < 3; attempt++) {
       this.press("enter");
       try {

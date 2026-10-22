@@ -144,6 +144,49 @@ export function inputText(screen: string): string {
 }
 
 /**
+ * Where the input box ENDS: its bottom border, or — for a screen that carries
+ * no frame (a narrow pane, an older render) — the status line under it. That
+ * line moves on its own (`⏵⏵ auto mode on · 1 shell · ↓ to manage`), and read
+ * as part of the box it would pass for a paste that landed.
+ */
+const BOX_END = /^\s*(?:[─━]{10,}|⏵⏵|⏸|\?\s+for shortcuts)/;
+
+/**
+ * The WHOLE input box, not just its first line.
+ *
+ * `inputText` reads the `❯` line alone, which is everything there is while a
+ * prompt fits on one line — and nothing at all once it does not. A prompt that
+ * wraps, or one pasted into a box that was ALREADY occupied, puts the rest on
+ * continuation lines carrying no `❯`, so the line `inputText` watches stops
+ * moving while the box fills up.
+ *
+ * That blind spot is what turned an ordinary interrupt into "the text never
+ * appeared in the input box". Observed on a live pane, 300 ms apart: a prompt
+ * submitted and running, then an Escape (the Telegram bridge preempting a turn
+ * for the message typed right behind it) — and Claude Code **puts the
+ * interrupted prompt back into the box**. The next paste therefore landed under
+ * text that was already there, the `❯` line never changed, and six attempts
+ * stacked six copies of the message's header in the box while every check
+ * reported nothing had arrived.
+ *
+ * Reading the whole box fixes both halves at once: a paste that landed is
+ * visible wherever it landed, and a Ctrl-U that removed ONE line (which is all
+ * it removes) shows as progress instead of as a box that will not clear.
+ */
+export function boxText(screen: string): string {
+  const lines = screen.split("\n");
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trimStart().startsWith("❯") || /^!\s/.test(lines[i])) start = i;
+  }
+  if (start === -1) return "";
+  const out = [lines[start].replace(/^\s*[❯!]\s*/, "")];
+  // Everything up to the box's bottom border belongs to the box.
+  for (let i = start + 1; i < lines.length && !BOX_END.test(lines[i]); i++) out.push(lines[i]);
+  return out.join("\n").trim();
+}
+
+/**
  * Why a screen refused a prompt — named, when the shape is recognisable.
  *
  * `submit` reports "the text never appeared in the input box", which describes
@@ -165,6 +208,15 @@ export function describeStuckScreen(screen: string): string | null {
     return "the screen is a masked input field (long runs of asterisks), so the pasted text is never readable back";
   if (/^\s*❯\s*\d+\.\s+\S/m.test(screen))
     return "the agent is waiting on a question, not on a prompt — answer it first";
+  // Last, because the three above are more specific and a full box is often
+  // their consequence rather than their cause. MULTI-LINE only: at rest the box
+  // shows the previous message as a one-line suggestion, and blaming that ghost
+  // would be the confident wrong answer this function exists to avoid. Text
+  // Claude Code put back after an interrupt keeps its ⟦header⟧ line, so it is
+  // the multi-line one.
+  const box = boxText(screen);
+  if (box.includes("\n"))
+    return `the input box was not empty — it still held ${box.split("\n").length} lines beginning ${JSON.stringify(box.split("\n")[0].slice(0, 50))}, which is what Claude Code puts back there when a turn is interrupted`;
   return null;
 }
 
@@ -351,15 +403,25 @@ export interface TypeOptions {
  * "Landed" means the box DIFFERS from what it showed just before the paste, not
  * that it is non-empty: an empty box is not always blank. Before the first
  * prompt of a session, Claude Code (seen on 2.1.285) fills it with an example —
- * `❯ Try "refactor <filepath>"` — which `inputText` reads like typed text, so
- * "non-empty" was true before anything was pasted, and a paste the TUI dropped
- * was followed by Enter on a box holding nothing. The example also comes back
- * after a Ctrl-U, so "cleared" likewise means "back to that resting state".
- * Comparing with the state read just before is still content-agnostic (a
- * collapsed "[Pasted text +N lines]" differs from it as well as the text would)
- * and needs no list of hint strings, which would rot with the next release. The
- * baseline is re-read on every attempt, after the recovery has run, so a retry
- * that pastes the same text again is compared with the box it pastes into.
+ * `❯ Try "refactor <filepath>"` — which reads like typed text, so "non-empty"
+ * was true before anything was pasted, and a paste the TUI dropped was followed
+ * by Enter on a box holding nothing. The example also comes back after a
+ * Ctrl-U, so "cleared" likewise means "back to that resting state". Comparing
+ * with the state read just before is content-agnostic (a collapsed "[Pasted
+ * text +N lines]" differs from it as well as the text would) and needs no list
+ * of hint strings, which would rot with the next release. The baseline is
+ * re-read on every attempt, after the recovery has run, so a retry that pastes
+ * the same text again is compared with the box it pastes into.
+ *
+ * Every one of those reads is `boxText`, the WHOLE box, and that is the
+ * difference between this working and the failure it was reported for. With
+ * `inputText` — the `❯` line alone — a box that already held something was
+ * invisible: the paste landed on a continuation line, the watched line never
+ * moved, and the recovery's "is it clear?" compared that same unmoving line and
+ * answered yes without clearing anything. Six attempts then stacked six copies
+ * of the message's header into the box and the submit failed. Two Telegram
+ * messages a second apart is all it takes to get there, because an interrupted
+ * prompt is put BACK in the box (see `boxText`).
  *
  * It lives here, next to `idleStep` and `moveToOption`, for the reason those do:
  * it was written twice (node-pty and tmux), and could only be exercised by
@@ -372,15 +434,72 @@ const MAX_CLEARS = 40;
  *  (`SCREEN_FAST_MS`), or a press that worked would read as one that did not. */
 const CLEAR_STEP_MS = 400;
 
+/**
+ * Empty the input box, one Ctrl-U at a time.
+ *
+ * Ctrl-U clears ONE LINE, not the box (seen on 2.1.296): a two-line paste takes
+ * three presses — the last line, the newline, the first line. Progress cannot be
+ * read off `inputText`, which sees the first line only and therefore stays put
+ * while everything under it goes; `boxText` is what makes each press visible.
+ * A run of presses that leaves the SCREEN untouched is a box with nothing left
+ * to clear (or one that refuses to), and is given up on rather than hammered.
+ */
+async function emptyBox(pilot: TypingPilot, clearMs: number): Promise<void> {
+  let stuck = 0;
+  for (let press = 0; press < MAX_CLEARS && stuck < 2; press++) {
+    const shown = boxText(pilot.screen());
+    if (shown === "") return;
+    pilot.clearInput();
+    try {
+      await pilot.waitFor((s) => boxText(s) !== shown, { timeoutMs: Math.min(clearMs, CLEAR_STEP_MS) });
+      stuck = 0;
+    } catch {
+      // Two presses that moved nothing: there is nothing left to clear. That is
+      // also the resting state of a FRESH session, whose box shows an example
+      // (`❯ Try "create a util logging.py that…"`) that Ctrl-U leaves exactly
+      // as it is — verified on 2.1.301, where it neither clears nor rotates. So
+      // the first prompt of a session pays two harmless presses, and every
+      // later one pays nothing: an empty box is returned on the first read.
+      stuck++;
+    }
+  }
+}
+
+/**
+ * Did what the box held before the paste survive it?
+ *
+ * Compares the FIRST line only, and a bounded slice of it: a long prompt makes
+ * the box wrap and scroll, so the rest of `before` may no longer be on screen
+ * even though nothing was replaced.
+ *
+ * The cost of this reading is one wasted attempt when you send the very same
+ * message twice in a row ("ok", "oui") — the suggestion ghost then carries your
+ * own words, so the paste looks like it joined them. The box is cleared, the
+ * retry pastes into an empty one, and the message goes out. That beats the
+ * alternative, which charges every single message a Ctrl-U and a 400 ms wait
+ * to find out what is in a box that is almost always only a ghost.
+ */
+function survives(before: string, now: string): boolean {
+  const head = before.split("\n")[0].trim().slice(0, 40);
+  return head.length > 0 && now.includes(head);
+}
+
 export async function typeIntoBox(
   pilot: TypingPilot,
   text: string,
   { attempts = 6, appearMs = 2_000, settleMs = 400, clearMs = 1_000, prelude }: TypeOptions = {},
 ): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt++) {
-    // Only "" and the resting state count as an empty box; anything else the
-    // box shows once we paste is our paste (whole, or collapsed).
-    const before = inputText(pilot.screen());
+    // "Landed" means the box DIFFERS from what it showed just before, not that
+    // it is non-empty: an empty box is not always blank. Before the first prompt
+    // of a session, Claude Code (seen on 2.1.285) fills it with an example —
+    // `❯ Try "refactor <filepath>"` — so "non-empty" was true before anything
+    // was pasted, and a paste the TUI dropped was followed by Enter on a box
+    // holding nothing. Comparing with the state read just before stays
+    // content-agnostic (a collapsed "[Pasted text +N lines]" differs from it as
+    // well as the text would) and needs no list of hint strings, which would rot
+    // with the next release. Re-read on every attempt, after a recovery has run.
+    const before = boxText(pilot.screen());
     // N+1 pastes, and the LAST must be the message. Claude Code decides whether
     // a paste stays inline when it is the CURRENT one and leaves every earlier
     // one as it then became, so pasting separately is what puts the injected
@@ -394,62 +513,42 @@ export async function typeIntoBox(
     // to stop being.
     for (const chunk of prelude ? (Array.isArray(prelude) ? prelude : [prelude]) : []) {
       if (!chunk) continue;
-      const seen = pilot.screen();
+      const seen = boxText(pilot.screen());
       pilot.paste(chunk);
       try {
-        // The SCREEN, not `inputText`: that helper reads the `❯` line alone, so
-        // once a chunk has filled it every later one lands on a continuation
-        // line and the box's visible text stops moving.
-        await pilot.waitFor((s) => s !== seen, { timeoutMs: appearMs });
+        await pilot.waitFor((s) => boxText(s) !== seen, { timeoutMs: appearMs });
       } catch {
         // A chunk never showed. Fall through and paste the rest anyway: losing
         // the context is survivable, losing the message is not.
       }
     }
-    // The SCREEN, not `inputText`: the box's visible text is read off its `❯`
-    // line alone, so once a prelude has filled that line everything appended
-    // after it lands on continuation lines and `inputText` stops moving. Waiting
-    // on it then times out on a paste that arrived perfectly — which is exactly
-    // what the first version of this did, on every prelude long enough to wrap.
-    const afterPrelude = pilot.screen();
+    const afterPrelude = boxText(pilot.screen());
     pilot.paste(text);
     try {
+      // With no prelude the middle term is the same check as before, unchanged.
       await pilot.waitFor((s) => {
-        const now = inputText(s);
-        if (now === "" || now === before) return false; // nothing in the box yet
-        // With no prelude this is the original condition, unchanged.
-        return !prelude || s !== afterPrelude;
+        const now = boxText(s);
+        return now !== "" && now !== before && now !== afterPrelude;
       }, { timeoutMs: appearMs });
-      return true;
     } catch {
       await delay(settleMs); // let a paste that is still in flight land
-      const isClear = (s: string) => {
-        const now = inputText(s);
-        return now === "" || now === before;
-      };
-      // `before` (not `beforeText`) on purpose: a retry re-pastes the prelude,
-      // so the box has to come back to what it was before EITHER paste.
-      // Ctrl-U clears ONE line, not the box (seen on 2.1.296): a two-line paste
-      // takes three presses — the last line, the newline, the first line. Two
-      // presses left the first line behind and the next attempt pasted after it,
-      // which is how a prompt arrived as its header twice and its text nowhere.
-      // So press until the box reads clear. Progress cannot be read off the box:
-      // `inputText` sees its FIRST line only, which stays put while the lines
-      // under it go. The whole screen is what moves, so a run of presses that
-      // leaves it untouched is a screen with nothing to clear — given up on, and
-      // left to the next attempt rather than pasted into blindly.
-      let stuck = 0;
-      for (let press = 0; press < MAX_CLEARS && stuck < 3; press++) {
-        const shown = pilot.screen();
-        pilot.clearInput();
-        try {
-          await pilot.waitFor(isClear, { timeoutMs: Math.min(clearMs, CLEAR_STEP_MS) });
-          break;
-        } catch {
-          stuck = pilot.screen() === shown ? stuck + 1 : 0;
-        }
-      }
+      await emptyBox(pilot, clearMs);
+      continue;
     }
+    // It is in the box. On its own, or on top of what was already there?
+    //
+    // A box that reads non-empty is usually a GHOST: Claude Code offers the
+    // previous message as a greyed-out suggestion, and any paste wipes it out
+    // (verified on 2.1.301 — typing replaces it, while Ctrl-U, Ctrl-K and
+    // Escape all leave it exactly where it is, and backspacing to empty brings
+    // it back). After an interrupt, though, the box holds the real prompt the
+    // TUI put back, and pasting there submits two messages glued into one.
+    // A plain screen capture renders the two identically, so this does not
+    // guess: it pastes, then asks whether what was there is still there.
+    if (!survives(before, boxText(pilot.screen()))) return true;
+    // It joined the leftovers. Throw the attempt away — no settle delay, the
+    // paste has demonstrably landed — and start again on an empty box.
+    await emptyBox(pilot, clearMs);
   }
   return false;
 }

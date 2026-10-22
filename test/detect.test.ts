@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { idleStep, screenShowsWork, inputHasProbe, inputText, nextScreenDelay, SCREEN_FAST_MS, SCREEN_SLOW_MS, typeIntoBox } from "../src/detect.js";
+import { idleStep, screenShowsWork, inputHasProbe, inputText, boxText, describeStuckScreen, nextScreenDelay, SCREEN_FAST_MS, SCREEN_SLOW_MS, typeIntoBox } from "../src/detect.js";
 
 const idle = [
   "⏺ Done.",
@@ -228,7 +228,10 @@ test("typeIntoBox: a paste replacing the hint is recognised at once", async () =
   const p = fakeBox([0], { rest: HINT });
   assert.equal(await typeIntoBox(p, "HELLO", FAST), true);
   assert.equal(p.st.box, "HELLO");
-  assert.equal(p.st.pastes, 1);
+  assert.equal(p.st.pastes, 1); // no needless retry
+  // And nothing was cleared on the way: a box showing only a suggestion costs
+  // the ordinary message nothing at all. That is the whole reason the dirty-box
+  // case is detected AFTER the paste rather than guarded before it.
   assert.equal(p.st.clears, 0);
 });
 
@@ -241,7 +244,11 @@ test("typeIntoBox: a SLOW paste into a hinted box lands on the 2nd attempt, once
   assert.equal(ok, true);
   assert.equal(p.st.box, "HELLO"); // one copy, not "HELLOHELLO"
   assert.equal(p.st.pastes, 2);
-  assert.equal(p.st.clears, 1); // the hint's return confirmed the clear — no "stubborn" second Ctrl-U
+  // Bounded, not counted to the press: what matters is that the late paste was
+  // removed before the retry (hence exactly one copy above), and that a box
+  // showing only the example is not hammered. The exact number moves with the
+  // tolerance for a press whose effect renders slowly.
+  assert.ok(p.st.clears >= 1 && p.st.clears <= 6, `clears=${p.st.clears}`);
 });
 
 test("typeIntoBox: a hint that changes across a clear is not mistaken for the paste", async () => {
@@ -253,8 +260,8 @@ test("typeIntoBox: a hint that changes across a clear is not mistaken for the pa
 
 // Claude Code's Ctrl-U clears ONE line (seen on 2.1.296): the text of the line
 // the cursor is on, then — pressed again on an empty line — the newline above.
-function lineBox(landDelays: number[]) {
-  const st = { box: "", pastes: 0, clears: 0 };
+function lineBox(landDelays: number[], initial = "") {
+  const st = { box: initial, pastes: 0, clears: 0 };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const render = () => "❯ " + st.box.split("\n").join("\n  ");
   return {
@@ -417,4 +424,90 @@ test("typeIntoBox: a prelude CHUNK that never lands must not take the message wi
   });
   assert.equal(ok, true);
   assert.ok(p.st.box.endsWith("ALPHA"), `box was ${JSON.stringify(p.st.box)}`);
+});
+
+/* ------------------------------------------------------------------ *
+ * The whole input box. Captured from a live pane (2.1.301): the composer is
+ * framed by two border lines, the ❯ carries a NON-BREAKING space, and a
+ * prompt that wraps continues on lines that carry no marker at all.
+ * ------------------------------------------------------------------ */
+const BORDER = "─".repeat(100);
+const screenWith = (...boxLines: string[]) =>
+  ["● ALPHA", "", "✻ Cogitated for 1s · done 12:14 PM", BORDER, ...boxLines, BORDER, "  ⏵⏵ auto mode on (shift+tab to cycle)"].join("\n");
+
+test("boxText: an empty box reads empty, marker and all", () => {
+  // The TUI pads the ❯ with U+00A0, not a space.
+  assert.equal(boxText(screenWith("❯\u00a0")), "");
+  assert.equal(boxText(screenWith("❯ ")), "");
+});
+
+test("boxText: a wrapped prompt includes the lines inputText cannot see", () => {
+  const screen = screenWith("❯ ⟦telegram · 2026-10-22 12:14 · Alexandre⟧", "  R4-A: answer with the single word ALPHA");
+  // What the old check watched: the ❯ line alone.
+  assert.equal(inputText(screen), "⟦telegram · 2026-10-22 12:14 · Alexandre⟧");
+  // What the box actually holds.
+  assert.equal(
+    boxText(screen),
+    "⟦telegram · 2026-10-22 12:14 · Alexandre⟧\n  R4-A: answer with the single word ALPHA",
+  );
+});
+
+test("boxText: the box stops at its border, not at the end of the screen", () => {
+  // The footer ("⏵⏵ auto mode on · 1 shell · ↓ to manage") changes on its own
+  // as background shells come and go. Swallowed into the box, it would read as
+  // the box changing — i.e. as a paste that landed.
+  const a = screenWith("❯ hello");
+  const b = a.replace("auto mode on (shift+tab to cycle)", "auto mode on · 1 shell · ↓ to manage");
+  assert.equal(boxText(a), "hello");
+  assert.equal(boxText(b), "hello");
+});
+
+test("boxText: shell mode and a screen with no box at all", () => {
+  assert.equal(boxText(screenWith("! npm test")), "npm test");
+  assert.equal(boxText("just some output\nno composer here"), "");
+});
+
+test("typeIntoBox: a box still holding an interrupted prompt is emptied, never appended to", async () => {
+  // The reported bug, start to finish. Two Telegram messages a second apart:
+  // the first is submitted and running, the bridge preempts it with an Escape
+  // for the second — and Claude Code PUTS THE INTERRUPTED PROMPT BACK in the
+  // box (observed on a live pane, 300 ms after the Escape). The resend then
+  // pasted under text that was already there. Watching the ❯ line alone, the
+  // paste was invisible and the "is it clear?" check answered yes without
+  // clearing anything, so six attempts stacked six headers in the box and the
+  // submit failed with "the text never appeared in the input box".
+  const leftover = "⟦telegram · 2026-10-22 12:19 · Alexandre⟧\nMSG-ONE: count slowly from 1 to 30";
+  const message = "⟦telegram · 2026-10-22 12:19 · Alexandre⟧\nMSG-TWO: answer with the single word TWO";
+  const p = lineBox([0, 0], leftover);
+  const ok = await typeIntoBox(p, message, { appearMs: 60, settleMs: 20, clearMs: 40, attempts: 3 });
+  assert.equal(ok, true);
+  assert.equal(p.st.box, message); // the message alone — no leftover glued in front
+  // Two pastes: the first LANDED, and was thrown away precisely because what
+  // the box held survived it. That is the signal a plain capture gives us —
+  // real text and a greyed-out suggestion read exactly alike.
+  assert.equal(p.st.pastes, 2);
+});
+
+test("typeIntoBox: the previous message offered as a ghost is simply replaced", async () => {
+  // The common case, and it must stay free: at rest Claude Code shows the last
+  // message as a suggestion. A paste wipes it out, so nothing survives and the
+  // first attempt is accepted — no clearing, no second paste.
+  const p = lineBox([0], "");
+  const ghost = { ...p, screen: () => (p.st.box ? p.screen() : "❯ answer with the single word BETA") };
+  const ok = await typeIntoBox(ghost, "and now ALPHA", { appearMs: 60, settleMs: 20, clearMs: 40 });
+  assert.equal(ok, true);
+  assert.equal(p.st.box, "and now ALPHA");
+  assert.equal(p.st.pastes, 1);
+  assert.equal(p.st.clears, 0);
+});
+
+test("describeStuckScreen: a full input box is named, instead of pointing at the box as if it were empty", () => {
+  const screen = screenWith("❯ ⟦telegram · 2026-10-22 12:19 · Alexandre⟧", "  MSG-ONE: count slowly from 1 to 30");
+  const why = describeStuckScreen(screen);
+  assert.match(String(why), /input box was not empty/);
+  assert.match(String(why), /interrupted/); // where that text comes from
+  // An empty box is not a diagnosis — and neither is the one-line suggestion
+  // the box shows at rest, which looks exactly like text in a capture.
+  assert.equal(describeStuckScreen(screenWith("❯ ")), null);
+  assert.equal(describeStuckScreen(screenWith("❯ R4-B: answer with the single word BETA")), null);
 });
