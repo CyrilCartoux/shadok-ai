@@ -627,6 +627,83 @@ export function makeAlbumBuffer<T>(
   };
 }
 
+/** How long any one Bot API call may take. Generous — the point is not speed,
+ *  it is that no call may wait for ever. */
+const API_TIMEOUT_MS = 60_000;
+
+/** The same, for a multipart upload: megabytes over someone else's link. */
+const UPLOAD_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Why a Bot API answer is not a delivery, in one phrase fit for a log line.
+ *
+ * `null` (what `tg` returns when the call itself failed) is a DIFFERENT fact
+ * from Telegram answering "no", and the two have to read differently: one says
+ * we could not reach it, the other says it refused and why.
+ */
+export function refusalReason(res: unknown): string {
+  const r = res as { ok?: boolean; error_code?: number; description?: unknown } | null | undefined;
+  if (!r) return "no answer from the Bot API (timed out, or unreachable)";
+  if (r.ok) return "no refusal";
+  const why = typeof r.description === "string" && r.description ? r.description : "refused with no reason given";
+  return r.error_code ? `${r.error_code} ${why}` : why;
+}
+
+/** Grace added to the delay Telegram asks for: `retry_after` is a floor, and
+ *  coming back one millisecond early buys a second refusal. */
+const FLOOD_MARGIN_MS = 250;
+
+/** Total time ONE message may spend waiting out flood control. Past it we give
+ *  up and say so: an answer held for ten minutes is no longer an answer. */
+export const FLOOD_BUDGET_MS = 3 * 60_000;
+
+/**
+ * Telegram's "you are going too fast", as the delay it asked for in ms — or
+ * null when the answer is anything else.
+ *
+ * This is the one refusal that must never be read as a failure: it says the
+ * message is fine and the moment is wrong. A bot trips it on its own, by
+ * sending a burst (a handful of videos is enough), so the busiest moment in a
+ * channel is exactly the moment its answers would disappear.
+ *
+ * A network failure (`null` here) is NOT flood control: retrying it in place
+ * would hold the queue on something that has no stated delay to wait for.
+ */
+export function floodWaitMs(res: unknown): number | null {
+  const r = res as { ok?: boolean; error_code?: number; parameters?: { retry_after?: unknown } } | null | undefined;
+  if (!r || r.ok || r.error_code !== 429) return null;
+  const asked = r.parameters?.retry_after;
+  // In practice a 429 always carries `retry_after`; if one ever does not, a
+  // short wait is still the right answer. What must not happen is reading
+  // "too fast" as "undeliverable".
+  const sec = typeof asked === "number" && Number.isFinite(asked) && asked > 0 ? asked : 1;
+  return Math.ceil(sec * 1000) + FLOOD_MARGIN_MS;
+}
+
+/**
+ * Run a Bot API call, waiting out flood control within a budget.
+ *
+ * Waiting in place is right BECAUSE the queue is serial: the message keeps its
+ * turn, so nothing arrives out of order. Pure over `sleep`, so the budget is
+ * tested without spending it.
+ */
+export async function withFloodControl<T>(
+  call: () => Promise<T>,
+  opts: { sleep: (ms: number) => Promise<void>; budgetMs?: number; onWait?: (ms: number) => void },
+): Promise<T> {
+  let left = opts.budgetMs ?? FLOOD_BUDGET_MS;
+  for (;;) {
+    const res = await call();
+    const wait = floodWaitMs(res);
+    // Past the budget the LAST answer is returned, refusal and all, so the
+    // caller reports a refused send rather than an unexplained silence.
+    if (wait === null || wait > left) return res;
+    left -= wait;
+    opts.onWait?.(wait);
+    await opts.sleep(wait);
+  }
+}
+
 /**
  * Serial send queue. Each `send`/`edit` of a bridge fired its own `fetch`
  * unawaited, so two calls close together did not necessarily arrive in the
@@ -919,13 +996,31 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(params),
-        signal,
+        // A call with no deadline is how a bridge goes permanently mute. The
+        // writes are SERIAL (`makeSendQueue`), so a single request that never
+        // settles holds every later message behind it — for ever, with nothing
+        // logged, while the channel keeps RECEIVING perfectly: measured on a
+        // live instance, a topic whose last send was a burst of uploads 50
+        // minutes earlier, its agent still answering into a void.
+        // The long-poll brings its own signal and keeps it: it waits on purpose.
+        signal: signal ?? AbortSignal.timeout(API_TIMEOUT_MS),
       });
       return await r.json();
     } catch {
       return null;
     }
   };
+
+  /** A bridge's address, for a log line that says WHICH topic went quiet. */
+  const chatLabel = (b: Bridge): string => `${b.chatId}${b.threadId ? `/${b.threadId}` : ""}`;
+
+  /** `tg`, but a flood-control refusal is waited out rather than dropped. */
+  const noFlood = <T>(b: Bridge, call: () => Promise<T>): Promise<T> =>
+    withFloodControl(call, {
+      sleep: (ms) => new Promise<void>((r) => setTimeout(r, ms)),
+      onWait: (ms) =>
+        console.log(`telegram: ${chatLabel(b)} rate-limited by Telegram, holding ${Math.round(ms / 1000)}s`),
+    });
 
   // Purge old attachments at startup — media/ only grows otherwise.
   try {
@@ -968,15 +1063,23 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
     const to = { chat_id: b.chatId, ...(b.threadId ? { message_thread_id: b.threadId } : {}) };
     // Render the agent's Markdown as Telegram HTML; if Telegram rejects it
     // (malformed after a mid-chunk split), resend the raw text as-is.
-    const r = await tg("sendMessage", {
-      ...to,
-      text: mdToTelegramHtml(part),
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-    });
+    const r = await noFlood(b, () =>
+      tg("sendMessage", {
+        ...to,
+        text: mdToTelegramHtml(part),
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      }),
+    );
     if (r?.ok) return r.result.message_id;
-    const raw = await tg("sendMessage", { ...to, text: part, disable_web_page_preview: true });
-    return raw?.ok ? raw.result.message_id : null;
+    const raw = await noFlood(b, () => tg("sendMessage", { ...to, text: part, disable_web_page_preview: true }));
+    if (raw?.ok) return raw.result.message_id;
+    // SAY it. This returned null in silence, which made a refused send
+    // indistinguishable from a delivered one — for the user, who is simply
+    // never answered, and for anyone reading the log afterwards, where the
+    // whole incident leaves no trace at all.
+    console.log(`telegram: ${chatLabel(b)} — message NOT delivered: ${refusalReason(raw ?? r)}`);
+    return null;
   };
 
   /** Send a text (split if needed). Goes through the bridge's queue: two
@@ -1005,8 +1108,20 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
         form.append("chat_id", String(b.chatId));
         if (b.threadId) form.append("message_thread_id", String(b.threadId));
         form.append(photo ? "photo" : "document", new Blob([buf]), f.name);
-        await fetch(`${api}/${photo ? "sendPhoto" : "sendDocument"}`, { method: "POST", body: form });
+        // This upload used to be fire-and-forget: the response was never read,
+        // so a refusal looked exactly like a delivery, and it had no deadline
+        // at all — on a queue that is serial, the one call most likely to stall
+        // (megabytes, uploaded) was also the only one able to stall for ever.
+        const r = await noFlood(b, () =>
+          fetch(`${api}/${photo ? "sendPhoto" : "sendDocument"}`, {
+            method: "POST",
+            body: form,
+            signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+          }).then((x) => x.json() as Promise<{ ok?: boolean; description?: string } | null>),
+        );
+        if (!r?.ok) throw new Error(refusalReason(r));
       } catch (e: any) {
+        console.log(`telegram: ${chatLabel(b)} — upload of ${f.name} failed: ${e?.message ?? e}`);
         send(b, "⚠️ couldn't send " + f.name + " (" + (e?.message ?? e) + ")");
       }
     });

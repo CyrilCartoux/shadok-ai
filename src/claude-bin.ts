@@ -296,33 +296,37 @@ export const BINARY_BUSY_TRIES = 6;
 export const BINARY_BUSY_DELAY_MS = 500;
 
 /**
- * Runs a pilot's synchronous `start()`, waiting out a binary that is mid-upgrade.
+ * Runs a call that SPAWNS `claude`, waiting out a binary that is mid-upgrade.
  *
- * The retry lives HERE and not inside `start()` because both pilots' `start()`
- * are synchronous: waiting there would block the event loop for every other
- * agent. `attachPilot` is already async, so this is the first place that can
- * afford to wait at all.
+ * The retry lives HERE and not inside a pilot's `start()` because both pilots'
+ * `start()` are synchronous: waiting there would block the event loop for every
+ * other agent. `attachPilot` is already async, so this is the first place that
+ * can afford to wait at all.
+ *
+ * It takes a sync call OR an async one, and hands back what that call returned.
+ * The pilots' `start()` is the sync case; the auth probe is the async one, and
+ * it is not a second-class caller — EVERY spawn of the binary meets the same
+ * window, so every one of them has to be able to sit it out.
  *
  * Only a busy binary is retried. Any other failure is rethrown at once — a
  * missing binary or a bad path does not get better by being asked six times,
  * and burying it under three seconds of retries would hide the real message.
  */
-export async function startWithBusyRetry(
-  start: () => void,
+export async function startWithBusyRetry<T>(
+  start: () => T | Promise<T>,
   opts: {
     tries?: number;
     delayMs?: number;
     sleep?: (ms: number) => Promise<void>;
     onRetry?: (attempt: number, tries: number) => void;
   } = {},
-): Promise<void> {
+): Promise<T> {
   const tries = Math.max(1, opts.tries ?? BINARY_BUSY_TRIES);
   const delayMs = opts.delayMs ?? BINARY_BUSY_DELAY_MS;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   for (let i = 1; ; i++) {
     try {
-      start();
-      return;
+      return await start();
     } catch (e) {
       if (!isBinaryBusyError(e) || i >= tries) throw e;
       opts.onRetry?.(i, tries);

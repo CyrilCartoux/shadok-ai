@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  floodWaitMs,
+  withFloodControl,
+  refusalReason,
+  FLOOD_BUDGET_MS,
   shouldReattachBridge,
   senderName,
   replyContext,
@@ -937,4 +941,71 @@ test("the 20 MB ceiling is named as a ceiling, not as a failure", () => {
   assert.match(notice, /20 MB/);
   assert.match(notice, /34\.0 MB/);
   assert.match(notice, /video/);
+});
+
+
+test("flood control is a delay, not a failure", () => {
+  // The refusal that says the message is fine and the moment is wrong. A bot
+  // trips it on ITSELF — a burst of four videos is enough — so the busiest
+  // moment in a channel is exactly when its answers would start disappearing.
+  const wait = floodWaitMs({ ok: false, error_code: 429, parameters: { retry_after: 7 } });
+  assert.ok(wait !== null && wait >= 7000, String(wait));
+  // Strictly more than asked: retry_after is a floor, and coming back one
+  // millisecond early buys a second refusal.
+  assert.ok((wait as number) > 7000);
+});
+
+test("only flood control is waited out", () => {
+  assert.equal(floodWaitMs({ ok: true, result: { message_id: 1 } }), null);
+  // A 400 is a real refusal: the message as written will never be accepted.
+  assert.equal(floodWaitMs({ ok: false, error_code: 400, description: "can't parse entities" }), null);
+  // `null` is "the call itself failed" — no stated delay to wait for, so
+  // holding the serial queue on it would be waiting on nothing.
+  assert.equal(floodWaitMs(null), null);
+  assert.equal(floodWaitMs(undefined), null);
+  // A 429 with no retry_after still waits: "too fast" must never be read as
+  // "undeliverable" just because the delay was missing.
+  assert.ok((floodWaitMs({ ok: false, error_code: 429 }) ?? 0) > 0);
+});
+
+test("a rate-limited message is held and then sent, not dropped", async () => {
+  const slept: number[] = [];
+  let calls = 0;
+  const res = await withFloodControl(
+    async () => {
+      calls++;
+      return calls < 3
+        ? { ok: false, error_code: 429, parameters: { retry_after: 2 } }
+        : { ok: true, result: { message_id: 42 } };
+    },
+    { sleep: async (ms) => void slept.push(ms) },
+  );
+  assert.deepEqual(res, { ok: true, result: { message_id: 42 } });
+  assert.equal(calls, 3);
+  assert.equal(slept.length, 2);
+  assert.ok(slept.every((ms) => ms >= 2000));
+});
+
+test("the wait is bounded, and the last refusal comes back so it can be reported", async () => {
+  // An answer held for ten minutes is no longer an answer. What must NOT
+  // happen is swallowing the refusal on the way out: the caller has to be able
+  // to say the message was lost.
+  let calls = 0;
+  const forever = { ok: false, error_code: 429, parameters: { retry_after: 600 } };
+  const res = await withFloodControl(
+    async () => {
+      calls++;
+      return forever;
+    },
+    { sleep: async () => {}, budgetMs: FLOOD_BUDGET_MS },
+  );
+  assert.deepEqual(res, forever);
+  assert.equal(calls, 1, "a delay longer than the whole budget is not even waited once");
+});
+
+test("a refusal and an unreachable API do not read the same", () => {
+  // Two different facts: Telegram said no (and why), or we never heard back.
+  assert.match(refusalReason({ ok: false, error_code: 400, description: "TOPIC_CLOSED" }), /400 TOPIC_CLOSED/);
+  assert.match(refusalReason(null), /no answer/i);
+  assert.match(refusalReason({ ok: false }), /no reason given/i);
 });

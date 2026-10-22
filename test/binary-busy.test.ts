@@ -81,3 +81,20 @@ test("reports each retry, so a wait is never silent", async () => {
   );
   assert.deepEqual(seen, ["1/6", "2/6"]);
 });
+
+test("the retry hands back what the call returned, sync or async", async () => {
+  // Generalised for the auth probe: it is async and it has an answer, where a
+  // pilot's start() is synchronous and returns nothing. Both meet the same
+  // upgrade window, so both have to be able to sit it out.
+  assert.equal(await startWithBusyRetry(() => "sync", { sleep: async () => {} }), "sync");
+  let calls = 0;
+  const out = await startWithBusyRetry(
+    async () => {
+      if (++calls < 2) throw Object.assign(new Error("spawn ETXTBSY"), { code: "ETXTBSY" });
+      return "async";
+    },
+    { sleep: async () => {} },
+  );
+  assert.equal(out, "async");
+  assert.equal(calls, 2);
+});

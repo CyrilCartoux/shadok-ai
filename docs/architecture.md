@@ -395,6 +395,14 @@ Without this gate a public bot username is an open shell.
   are chunked under the 4096-char limit. A "typing…" heartbeat runs for the
   whole turn and is stopped by *every* terminal outcome (`turn-done`, `dialog`,
   `pace-blocked`, `exited`, WS close) — a missed one leaves it spinning forever.
+- **Writes are serial, bounded, and never silent.** Each bridge owns a FIFO
+  queue (`makeSendQueue`), so a preface cannot overtake its own keyboard. The
+  price of that order is that one stuck call stops the channel, so every Bot
+  API call carries a deadline and every refusal is said out loud: a `429` is
+  held for the `retry_after` it names and then retried, anything else is logged
+  with the topic it was meant for. The failure this replaces had no symptom at
+  all — the bridge kept receiving, the agent kept answering, the transcript was
+  up to date, and nothing came out.
 - **Commands**: `/setup`, `/spawn [profile] <name>`, `/profiles`, `/stop`
   (alias `/esc` — interrupts the turn), `/new`, `/end`, `/restart`, `/list`,
   `/cron` (`every 30m …`, `daily HH:MM …`, `list`, `on`, `off`, `del`),
