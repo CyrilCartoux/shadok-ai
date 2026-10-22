@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { idleStep, settleStep, DIALOG_HOLD_MS, screenShowsWork, inputText, describeStuckScreen, nextScreenDelay, typeIntoBox, SCREEN_FAST_MS } from "./detect.js";
+import { idleStep, settleStep, DIALOG_HOLD_MS, screenShowsWork, inputText, boxText, describeStuckScreen, nextScreenDelay, typeIntoBox, SCREEN_FAST_MS } from "./detect.js";
 import { windowMs, FORCED_CLAUDE_ENV } from "./session.js";
 import { binaryBusyError } from "./claude-bin.js";
 import { SHADOK_DIR } from "./config.js";
@@ -514,7 +514,11 @@ export class TmuxPilot {
     // Sent once the input box is empty again (or the spinner is up). Requiring
     // it to be truly empty makes the Enter retry robust to the bracketed-paste
     // race, and works for collapsed pastes (whose text is never on screen).
-    const submitted = (s: string) => screenShowsWork(s) || inputText(s) === "";
+    // The WHOLE box, not its first line: a prompt that wrapped leaves its tail
+    // on continuation lines, and `inputText` would read the emptied first line
+    // as a box that is gone while the rest of the message is still sitting
+    // there, unsent.
+    const submitted = (s: string) => screenShowsWork(s) || boxText(s) === "";
     for (let attempt = 0; attempt < 3; attempt++) {
       this.press("enter");
       try {

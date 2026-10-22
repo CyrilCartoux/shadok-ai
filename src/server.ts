@@ -3265,6 +3265,21 @@ interface Live {
    * the bar — never the check that the screen actually stopped working.
    */
   interruptedAt: number | null;
+  /**
+   * True while a prompt is being TYPED into the TUI — paste, retry, Enter.
+   *
+   * `busy` covers that stretch too, which is why a second message arriving in
+   * it is refused with `busy` and the Telegram bridge answers with an Escape
+   * (it preempts the turn it believes is running). But nothing is running yet:
+   * the Escape lands on a box being filled, where it deletes the text instead
+   * of interrupting anything — and a box that then reads empty is exactly what
+   * `submit` takes for "the prompt was sent", so the message is lost in
+   * silence. The interrupt is therefore HELD here and pressed once the submit
+   * has landed, where it does what it was meant to do.
+   */
+  submitting?: boolean;
+  /** An interrupt key that arrived mid-submit, waiting for the submit to end. */
+  pendingInterrupt?: "escape" | "ctrl-c";
   /** How long the last finished turn took, so a client attaching between
    *  turns can restore the frozen time instead of showing a blank timer. */
   lastTurnMs: number | null;
@@ -3905,6 +3920,37 @@ const INTERRUPTED_STABLE_MS = 400;
 function dialogSettleKey(screen: string): string | null {
   const d = detectDialog(screen);
   return d && !SUBMIT_PAGE.test(screen) ? dialogKey(d) : null;
+}
+
+/**
+ * Type a prompt into the TUI, holding any interrupt that arrives meanwhile.
+ *
+ * The window is small and it is exactly the one two fast Telegram messages fall
+ * into: the first is still being pasted when the second is refused as `busy`,
+ * and the bridge answers a refusal with an Escape. Pressed then, it deletes the
+ * text being typed instead of stopping a turn — and an empty box is what
+ * `submit` reads as "sent", so the first message disappears without a word.
+ * Held until the prompt is really in, it does what it was asked to do.
+ */
+async function submitGuarded(s: Live, text: string, prelude?: string[]): Promise<void> {
+  s.submitting = true;
+  let sent = false;
+  try {
+    await s.pilot.submit(text, prelude);
+    sent = true;
+  } finally {
+    s.submitting = false;
+    const held = s.pendingInterrupt;
+    s.pendingInterrupt = undefined;
+    if (held) {
+      // Only a submit that LANDED started a turn to interrupt. After one that
+      // failed the key is still worth pressing — it clears the box someone is
+      // waiting on — but claiming a turn was interrupted would hand the next
+      // one `finishTurn`'s fast settle bar on no evidence at all.
+      if (sent) s.interruptedAt = Date.now();
+      try { s.pilot.press(held); } catch { /* pane gone */ }
+    }
+  }
 }
 
 async function finishTurn(s: Live) {
@@ -4647,7 +4693,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
               // which is what lets the whole delta travel in the clear.
               if (rows.length) ledgerPrelude = formatLedgerChunks(rows, total);
             }
-            await session.pilot.submit(submitText, ledgerPrelude);
+            await submitGuarded(session, submitText, ledgerPrelude);
             if (ledgerSeen !== null) {
               session.ledgerSeenAt = ledgerSeen;
               // The live channel list prunes the watermarks of agents that are
@@ -4685,7 +4731,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
             // "did the text appear?" check holds in shell mode too.
             session.pilot.write("!");
             await session.pilot.waitFor(isShellMode, { timeoutMs: 5_000 });
-            await session.pilot.submit(command);
+            await submitGuarded(session, command);
           } catch (e) {
             // Leave no stray `!` behind: a half-entered shell mode would turn the
             // NEXT prompt into a command.
@@ -4801,6 +4847,12 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
             // the end state is known, so `finishTurn` may stop proving it the
             // slow way. Only while busy — an escape at rest ends no turn.
             if ((msg.key === "escape" || msg.key === "ctrl-c") && session.busy) {
+              // ...but not while the prompt is still being typed: there the
+              // key would delete the text rather than stop a turn. Hold it.
+              if (session.submitting) {
+                session.pendingInterrupt = msg.key as "escape" | "ctrl-c";
+                break;
+              }
               session.interruptedAt = Date.now();
             }
             session.pilot.press(msg.key as (typeof named)[number]);
