@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import {
+  promptFrame,
   pollSignal,
   floodWaitMs,
   withFloodControl,
@@ -1067,4 +1068,22 @@ test("no call to Telegram may be unbounded", () => {
       `a fetch to Telegram with no signal: ${span.replace(/\s+/g, " ").slice(0, 90)}`,
     );
   }
+});
+
+test("a prompt queued before the socket is ready arrives exactly like a live one", () => {
+  // `pending` used to hold the bare text, so the FIRST message of any new DM or
+  // topic — the one that cannot find a ready socket, by construction — reached
+  // the server with no author and no voice flag. The server builds the
+  // ⟦telegram · date · who⟧ header the AGENT reads out of those two fields, so
+  // "hello" from someone it has never heard from was the one message delivered
+  // anonymous, and a first voice note read as typed text. One builder, used by
+  // both paths, is what makes that impossible — and `PromptFrame` means pushing
+  // a bare string no longer compiles.
+  assert.deepEqual(promptFrame("hello", "Ada", true), { type: "prompt", text: "hello", from: "Ada", voice: true });
+  assert.deepEqual(promptFrame("hello", "Ada"), { type: "prompt", text: "hello", from: "Ada" });
+  // Absent, not null: the server tells "nobody said who" from "the author is
+  // the empty string", and an explicit `voice: false` would read as a typed
+  // message that bothered to say so.
+  assert.deepEqual(promptFrame("hello"), { type: "prompt", text: "hello" });
+  assert.deepEqual(promptFrame("hi", "", false), { type: "prompt", text: "hi" });
 });

@@ -627,6 +627,25 @@ export function makeAlbumBuffer<T>(
   };
 }
 
+/** The `prompt` frame a Telegram message becomes on the wire to our own server. */
+export type PromptFrame = { type: "prompt"; text: string; from?: string; voice?: true };
+
+/**
+ * Built ONCE, so the queued path and the live path cannot drift apart.
+ *
+ * They had: `pending` held the bare text, so a message that arrived before the
+ * WS was ready — the FIRST message of any new DM or topic, by construction —
+ * reached the server without `from` and without `voice`. Those two are not
+ * decoration: the server turns them into the `⟦telegram · <date> · <who>⟧`
+ * header the agent actually reads (`promptAuthor`, and `telegram vocal` for a
+ * transcription). So the one message where identity matters most, "hello" from
+ * someone the agent has never heard from, was the one delivered anonymous — and
+ * a first voice note looked like typed text.
+ */
+export function promptFrame(text: string, from?: string, voice = false): PromptFrame {
+  return { type: "prompt", text, ...(from ? { from } : {}), ...(voice ? { voice: true as const } : {}) };
+}
+
 /** How long any one Bot API call may take. Generous — the point is not speed,
  *  it is that no call may wait for ever. */
 const API_TIMEOUT_MS = 60_000;
@@ -883,7 +902,7 @@ interface Bridge {
   ws: WebSocket;
   sessionId: string | null;
   ready: boolean;
-  pending: string[]; // prompts queued until the WS is ready
+  pending: PromptFrame[]; // prompts queued until the WS is ready, whole (see promptFrame)
   pendingActions: object[]; // dialog actions (choose/toggle/confirm) queued until ready
   dialogMsgId?: number; // Telegram message showing the current dialog keyboard
   // A "free text" option was chosen: we wait for the channel's next message to
@@ -1269,7 +1288,7 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
           b.sessionId = m.sessionId;
           b.ready = true;
           persist();
-          for (const p of b.pending.splice(0)) ws.send(JSON.stringify({ type: "prompt", text: p }));
+          for (const p of b.pending.splice(0)) ws.send(JSON.stringify(p));
           for (const a of b.pendingActions.splice(0)) ws.send(JSON.stringify(a));
           break;
         case "working":
@@ -1458,9 +1477,9 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
     // Un message NEUF rouvre le droit d'interrompre ; un renvoi, non — sinon
     // deux clients qui se disputent la session se relancent indéfiniment.
     if (!resend) b.lastRetried = undefined;
-    if (b.ready && b.ws.readyState === WebSocket.OPEN)
-      b.ws.send(JSON.stringify({ type: "prompt", text, ...(from ? { from } : {}), ...(voice ? { voice: true } : {}) }));
-    else b.pending.push(text);
+    const frame = promptFrame(text, from, voice);
+    if (b.ready && b.ws.readyState === WebSocket.OPEN) b.ws.send(JSON.stringify(frame));
+    else b.pending.push(frame);
   };
 
   const reply = (chatId: number, threadId: number | undefined, text: string, extra: object = {}) =>
