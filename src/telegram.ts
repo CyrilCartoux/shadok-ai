@@ -631,8 +631,31 @@ export function makeAlbumBuffer<T>(
  *  it is that no call may wait for ever. */
 const API_TIMEOUT_MS = 60_000;
 
-/** The same, for a multipart upload: megabytes over someone else's link. */
-const UPLOAD_TIMEOUT_MS = 5 * 60_000;
+/** The same, for a file transfer either way: megabytes over someone else's link. */
+const TRANSFER_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * How long the long-poll may go unanswered before we abandon that request and
+ * open a new one. It asks Telegram for `timeout: 30`, so a healthy call comes
+ * back inside 30 s and this only ever fires on a request that is not coming
+ * back at all.
+ */
+const POLL_DEADLINE_MS = 45_000;
+
+/**
+ * The long-poll's signal: the loop's own abort OR a deadline, whichever comes
+ * first. Both halves are load-bearing. The abort is what `stop()` pulls to free
+ * an in-flight request, without which a restart meets Telegram's 409 (two
+ * getUpdates on one bot); the deadline is what stops a request that never
+ * settles from wedging the loop for ever. There is no watchdog behind it: the
+ * loop reschedules itself from the END of each call, so one unanswered request
+ * made a bridge permanently DEAF — incoming messages stop, nothing is logged,
+ * and only a server restart brings it back. That is the exact mirror of the
+ * send-side failure that bounded every write, and it was left unbounded.
+ */
+export function pollSignal(abort: AbortSignal, ms: number): AbortSignal {
+  return AbortSignal.any([abort, AbortSignal.timeout(ms)]);
+}
 
 /**
  * Why a Bot API answer is not a delivery, in one phrase fit for a log line.
@@ -1040,7 +1063,14 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
       throw new Error("file too large (Telegram bot limit: 20 MB)");
     const f = await tg("getFile", { file_id: att.fileId });
     if (!f?.ok) throw new Error(f?.description ?? "getFile failed");
-    const r = await fetch(`https://api.telegram.org/file/bot${token}/${f.result.file_path}`);
+    // Bounded for the same reason as the upload: this is the other direction of
+    // the same transfer, and a download that never settles leaves the user's
+    // attachment in limbo with no reason given. It does not hold the poll (the
+    // loop never awaits `handleUpdate`), so the loss is one message, not the
+    // channel — still a loss, and still silent until now.
+    const r = await fetch(`https://api.telegram.org/file/bot${token}/${f.result.file_path}`, {
+      signal: AbortSignal.timeout(TRANSFER_TIMEOUT_MS),
+    });
     if (!r.ok) throw new Error(`download HTTP ${r.status}`);
     fs.mkdirSync(MEDIA_DIR, { recursive: true });
     const dest = path.join(MEDIA_DIR, mediaFileName(att));
@@ -1116,7 +1146,7 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
           fetch(`${api}/${photo ? "sendPhoto" : "sendDocument"}`, {
             method: "POST",
             body: form,
-            signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+            signal: AbortSignal.timeout(TRANSFER_TIMEOUT_MS),
           }).then((x) => x.json() as Promise<{ ok?: boolean; description?: string } | null>),
         );
         if (!r?.ok) throw new Error(refusalReason(r));
@@ -2041,12 +2071,21 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
   const poll = async () => {
     if (stopped) return;
     pollAbort = new AbortController();
+    const startedAt = Date.now();
     const res = await tg(
       "getUpdates",
       { offset, timeout: 30, allowed_updates: ["message", "callback_query"] },
-      pollAbort.signal,
+      pollSignal(pollAbort.signal, POLL_DEADLINE_MS),
     );
     if (stopped) return; // aborted mid-flight during stop(); do not reschedule
+    // SAY it. A request that never came back used to end the loop in silence,
+    // which is indistinguishable from a quiet chat — so the bridge looked
+    // healthy while being deaf. A plain network error settles in milliseconds
+    // and is already handled by the back-off below; only the hang gets a line.
+    if (!res && Date.now() - startedAt >= POLL_DEADLINE_MS)
+      console.log(
+        `telegram: the long-poll went unanswered for ${Math.round(POLL_DEADLINE_MS / 1000)}s — opening a new one`,
+      );
     if (res?.ok && Array.isArray(res.result)) {
       for (const u of res.result) {
         offset = u.update_id + 1;
@@ -2328,7 +2367,11 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
 export async function probeToken(token: string | null): Promise<{ username: string | null; error: string | null }> {
   if (!token) return { username: null, error: null };
   try {
-    const r = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    // The GUI waits on this answer, so it needs one: unbounded, a token typed
+    // against an unreachable Telegram left the status view spinning for ever.
+    const r = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
     const j = await r.json();
     if (j?.ok) return { username: `@${j.result.username}`, error: null };
     return { username: null, error: j?.description ?? `HTTP ${r.status}` };

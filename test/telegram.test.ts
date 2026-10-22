@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import {
+  pollSignal,
   floodWaitMs,
   withFloodControl,
   refusalReason,
@@ -1008,4 +1010,61 @@ test("a refusal and an unreachable API do not read the same", () => {
   assert.match(refusalReason({ ok: false, error_code: 400, description: "TOPIC_CLOSED" }), /400 TOPIC_CLOSED/);
   assert.match(refusalReason(null), /no answer/i);
   assert.match(refusalReason({ ok: false }), /no reason given/i);
+});
+
+test("the long-poll's signal keeps the manual abort AND gains a deadline", async () => {
+  // Both halves matter. Without the abort, `stop()` cannot free an in-flight
+  // request and a restart meets Telegram's 409 (two getUpdates on one bot).
+  // Without the deadline, a request that never settles ends the poll loop for
+  // ever — the loop reschedules from the END of each call, so the bridge goes
+  // deaf with nothing logged and only a restart brings it back.
+  const manual = new AbortController();
+  const sig = pollSignal(manual.signal, 60_000);
+  assert.equal(sig.aborted, false);
+  manual.abort(new Error("stop() pulled it"));
+  assert.equal(sig.aborted, true, "the manual abort must still reach the request");
+
+  const fresh = new AbortController();
+  const quick = pollSignal(fresh.signal, 20);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(quick.aborted, true, "a request nobody answers must be abandoned");
+  assert.equal(fresh.signal.aborted, false, "the deadline fires on its own, not through the controller");
+});
+
+test("no call to Telegram may be unbounded", () => {
+  // The scan is the test, like the CSP nonce and the WS scheme: nothing in the
+  // type system says a `fetch` has a deadline, and every unbounded one found so
+  // far cost a bridge that went silent — mute (the serial send queue held
+  // behind one call) or deaf (the long-poll never coming back). Both failures
+  // left no log line at all, which is why they were measured in production
+  // rather than noticed in review.
+  const src = fs.readFileSync(new URL("../src/telegram.ts", import.meta.url), "utf8");
+  const spans: string[] = [];
+  for (let i = src.indexOf("fetch("); i >= 0; i = src.indexOf("fetch(", i + 1)) {
+    // The call's own argument list, by balanced parentheses.
+    let depth = 0;
+    const from = src.indexOf("(", i);
+    let j = from;
+    for (; j < src.length; j++) {
+      if (src[j] === "(") depth++;
+      else if (src[j] === ")" && --depth === 0) break;
+    }
+    spans.push(src.slice(from, j + 1));
+  }
+  assert.ok(spans.length >= 4, `expected to find the fetch calls, found ${spans.length}`);
+  // The long-poll is the ONE caller that brings its own signal, which is also
+  // how it opts out of `tg`'s default deadline — so the deadline has to be in
+  // the signal it brings, and a scan over `fetch` alone cannot see that.
+  assert.match(
+    src,
+    /pollSignal\(pollAbort\.signal, POLL_DEADLINE_MS\)/,
+    "the long-poll must carry its own deadline, not just its abort",
+  );
+  for (const span of spans) {
+    assert.match(
+      span.replace(/\s+/g, " "),
+      /signal/,
+      `a fetch to Telegram with no signal: ${span.replace(/\s+/g, " ").slice(0, 90)}`,
+    );
+  }
 });
