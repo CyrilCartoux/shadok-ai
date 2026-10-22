@@ -403,6 +403,18 @@ Without this gate a public bot username is an open shell.
   with the topic it was meant for. The failure this replaces had no symptom at
   all — the bridge kept receiving, the agent kept answering, the transcript was
   up to date, and nothing came out.
+- **Reads are bounded too, for a sharper reason.** The long-poll reschedules
+  itself from the END of each call, so a single request that never comes back
+  ends the loop outright: the bridge goes **deaf**, with no log line, no
+  watchdog behind it, and only a restart to bring it back. Its signal is the
+  loop's own abort OR a 45 s deadline (`pollSignal`) — the abort half is what
+  `stop()` pulls to free an in-flight request, without which a restart meets
+  Telegram's 409 (two `getUpdates` on one bot), and the deadline half is what
+  the mute-bridge fix had left out. A request abandoned that way says so and a
+  new one opens. The attachment download is bounded the same way (it costs one
+  message rather than the channel, since the loop never awaits `handleUpdate`)
+  and so is the `getMe` the GUI waits on. `test/telegram.test.ts` scans this
+  file for the rule types cannot carry: no `fetch` to Telegram without a signal.
 - **Commands**: `/setup`, `/spawn [profile] <name>`, `/profiles`, `/stop`
   (alias `/esc` — interrupts the turn), `/new`, `/end`, `/restart`, `/list`,
   `/cron` (`every 30m …`, `daily HH:MM …`, `list`, `on`, `off`, `del`),
