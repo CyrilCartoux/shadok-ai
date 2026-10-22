@@ -6198,6 +6198,9 @@
         if (t === active) promptInput.focus();
         break;
       case "working":
+        // The turn is confirmed running: the optimistic gap is over, and any
+        // further send now goes through the busy (takeover) path.
+        t.awaitingTurn = false;
         // Another client may have resolved the pending dialog.
         retireChoices(t);
         // Covers turns started elsewhere (other client, dialog answer, cron) and
@@ -6326,11 +6329,13 @@
           persistChannels();
         }
         stopTurnTimer(t);
-        // A message was typed during this turn (a takeover): the turn has just
-        // settled, so send it now. Mirrors the Telegram bridge's preempt.
-        if (t.preempting) {
-          const queued = t.preempting;
-          t.preempting = null;
+        t.awaitingTurn = false;
+        // Messages queued during this turn — a takeover (preemptTurn) or a fast
+        // double-send (queueForNextTurn) — settle now. Send the NEXT one, in
+        // order; submitPrompt re-arms the gap, so the rest flush on the following
+        // turn-done. Mirrors the Telegram bridge's preempt.
+        if (t.sendQueue && t.sendQueue.length) {
+          const queued = t.sendQueue.shift();
           clearTimeout(t.preemptTimer);
           setTabState(t, "ready", "ready");
           submitPrompt(t, queued);
@@ -6382,6 +6387,7 @@
         // to restore it and forget it so it doesn't resurrect every reload.
         addTurn(t, "system", "", msg.message);
         forgetChannel(msg.sessionId);
+        drainQueueToBox(t);
         stopTurnTimer(t);
         setTabMood(t, null);
         setTabState(t, "dead", "directory gone");
@@ -6391,6 +6397,11 @@
         // the instance's. Surface the fix instead of a line in the transcript.
         if (msg.code === "logged-out") { openAuthCard(); }
         addTurn(t, "system", "", "Error: " + msg.message);
+        // A turn died before it could flush what was queued behind it (a fast
+        // double-send): hand those back to the box rather than strand them.
+        if (drainQueueToBox(t)) {
+          addTurn(t, "system", "", "Your next message is back in the box — the turn didn't complete.");
+        }
         // Failed before ever going live (e.g. a bad restore): mark dead so it
         // doesn't hang on "connecting…".
         if (t.status === "connecting") setTabState(t, "dead", "failed to start");
@@ -6402,6 +6413,7 @@
         break;
       case "exited":
         addTurn(t, "system", "", "The claude process exited (code " + msg.code + ").");
+        drainQueueToBox(t);
         stopTurnTimer(t);
         setTabMood(t, null);
         setTabState(t, "dead", "session ended");
@@ -6445,6 +6457,11 @@
         // pilot exits while the server awaits getUsage(), "exited" marks the tab
         // dead and this refusal would resurrect it as ready with a green LED,
         // with no later message to correct it.
+        // The refused prompt never became a turn: close the optimistic gap. Its
+        // own text is re-offered by renderPaceConfirm below; anything queued
+        // BEHIND it (a fast follow-up) has no turn to ride on, so hand it back.
+        t.awaitingTurn = false;
+        drainQueueToBox(t);
         const rollback = t.status === "ready";
         if (rollback) {
           stopTurnTimer(t);
@@ -6585,19 +6602,52 @@
   function preemptTurn(t, text) {
     // Socket down: leave the text in the box, like submitPrompt's own guard.
     if (!sendTo(t, { type: "key", key: "escape" })) return;
-    t.preempting = text;
+    queueForNextTurn(t, text);
+    setTabState(t, "busy", "interrupting…");
+    clearTimeout(t.preemptTimer);
+    t.preemptTimer = setTimeout(() => {
+      // Interrupt never landed (a wedged turn): hand the still-queued messages
+      // back rather than lose them or loop. Only the interrupt path arms this —
+      // a message merely QUEUED behind a healthy long turn must wait as long as
+      // the turn takes, which can far exceed this failsafe.
+      if (!t.sendQueue || !t.sendQueue.length) return;
+      const stuck = t.sendQueue.join("\n");
+      t.sendQueue = [];
+      if (t === active && !promptInput.value) { promptInput.value = stuck; active.draft = stuck; }
+      addTurn(t, "system", "", "Couldn't interrupt the running turn — your message is back in the box. Try again, or use ⎋.");
+    }, PREEMPT_TIMEOUT_MS);
+  }
+
+  /**
+   * Stash a message to send once the in-flight turn settles, and clear the
+   * composer so the user sees it was accepted. Nothing is rendered now: the
+   * message appears as an ordinary prompt when it is actually sent (on
+   * `turn-done`), so the transcript stays in order. Shared by the takeover
+   * (preemptTurn, which also interrupts) and the fast-double-send guard, where a
+   * second Enter lands before the server's `working` has flipped the tab to
+   * busy — without this it fired a SECOND raw prompt, which the server refused as
+   * "a response is already in progress" while the box was already cleared, so the
+   * message was lost. A FIFO queue, not a single slot: several quick messages all
+   * survive, delivered in order.
+   */
+  function queueForNextTurn(t, text) {
+    (t.sendQueue ||= []).push(text);
     t.transcriptEl._stickBottom = true;
     if (t === active) { promptInput.value = ""; promptInput.style.height = "auto"; }
     dropDraft(t);
     clearAttachments(t); // their paths are already folded into `text`
-    setTabState(t, "busy", "interrupting…");
-    clearTimeout(t.preemptTimer);
-    t.preemptTimer = setTimeout(() => {
-      if (t.preempting !== text) return; // already sent, or replaced by a newer one
-      t.preempting = null;
-      if (t === active && !promptInput.value) { promptInput.value = text; active.draft = text; }
-      addTurn(t, "system", "", "Couldn't interrupt the running turn — your message is back in the box. Try again, or use ⎋.");
-    }, PREEMPT_TIMEOUT_MS);
+  }
+
+  /** Hand any queued-but-unsent messages back to the composer (a turn died
+   *  before they could be flushed), so a fast double-send is never swallowed by
+   *  an error/exit. Returns true if something was restored. */
+  function drainQueueToBox(t) {
+    t.awaitingTurn = false;
+    if (!t.sendQueue || !t.sendQueue.length) return false;
+    const stuck = t.sendQueue.join("\n");
+    t.sendQueue = [];
+    if (t === active && !promptInput.value) { promptInput.value = stuck; active.draft = stuck; autosizePrompt(); }
+    return true;
   }
 
   function submitPrompt(t, text, force) {
@@ -6609,6 +6659,12 @@
       addTurn(t, "system", "", "Not sent: this agent is not connected. Your text is still in the box.");
       return;
     }
+    // The turn is in flight but the server's `working` has not come back yet, so
+    // t.status is still "ready". Mark the gap so a second fast Enter QUEUES
+    // (queueForNextTurn) instead of firing another raw prompt the server would
+    // refuse as busy — the fast-double-send bug. Cleared on `working` (the busy
+    // path takes over from there) and on every turn settle/terminal.
+    t.awaitingTurn = true;
     // Any outstanding pace question is answered by the fact that something is
     // being sent — whether by clicking its own button or by a fresh submit.
     retirePaceConfirm(t);
@@ -6714,6 +6770,12 @@
     // Sending during a running turn is a takeover: interrupt it, then send the
     // message once the turn settles. Same behaviour as Telegram.
     if (t.status === "busy") return preemptTurn(t, text);
+    // A prompt is already in flight but the server's `working` has not come back
+    // yet (t.status still "ready"): a fast second Enter. QUEUE it instead of
+    // firing a second raw prompt the server refuses as busy — the message would
+    // otherwise be lost with the box already cleared. No interrupt: the turn is
+    // only just starting, so let it finish and send this next.
+    if (t.awaitingTurn) return queueForNextTurn(t, text);
     if (t.status !== "ready") return;
     // Checked here so nothing is optimistically rendered before the server
     // refuses. The server re-checks anyway — it is the authority.

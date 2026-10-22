@@ -1259,6 +1259,29 @@ Auth section of `docs/architecture.md`).
     from that body is silently reset — which is why `effort` had to be added
     there too, or ticking a secret would have wiped a role's effort.
 
+42. **The web tab turns busy only when the server's `working` comes back — so a
+    fast second Enter sends a SECOND raw prompt the server refuses.** The
+    client-side twin of invariant 36 (which hardened the PILOT against the same
+    two-fast-messages case). `submitPrompt` renders the turn and clears the box
+    OPTIMISTICALLY but never sets `t.status` — that flips to `"busy"` only on the
+    server's `working`. In the gap between the send and that event (a few hundred
+    ms), the submit handler still saw `"ready"` and fired `submitPrompt` AGAIN;
+    the server, already mid-turn, refused the second with `code:"busy"`
+    (`a response is already in progress`) — but the box was already cleared and
+    the bubble already drawn, so the message was **lost with a confusing error**.
+    Reproduced deterministically (two frames, both `type:"prompt"`) and fixed
+    with `t.awaitingTurn`, set the instant a prompt is sent and cleared on
+    `working`/`turn-done`/terminal: while it is set, a further Enter is QUEUED
+    (`queueForNextTurn`) instead of re-sent, and flushed on `turn-done`. The
+    queue is a FIFO (`t.sendQueue`), not a single slot, so SEVERAL quick messages
+    all survive and arrive in order — the single-slot `t.preempting` it replaced
+    dropped all but the last. The deliberate mid-turn takeover (status already
+    `"busy"` → `preemptTurn`, Escape + queue) is unchanged: only the gap now
+    queues rather than interrupting, since the turn is barely starting. A turn
+    that dies before flushing (`error`/`exited`/`gone`/`pace-blocked`) hands the
+    queued text back to the box (`drainQueueToBox`), never strands it. Verified
+    end to end against a live agent: two fast messages both answered, no refusal.
+
 
 ## Conventions
 
