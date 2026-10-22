@@ -5546,6 +5546,16 @@
   function scheduleReconnect(t) {
     if (t.closing) return;
     if (t.reconnectTimer) clearTimeout(t.reconnectTimer);
+    // The socket that owed us a `working` is gone, so the optimistic gap can
+    // never close by itself: drop it and hand back anything queued behind it.
+    // Without this a drop INSIDE that gap latched `awaitingTurn` for good — the
+    // reattach only sends `working` when the session is still busy, so a turn
+    // that finished while we were away leaves no event to clear it, and every
+    // later Enter queued behind a turn that will never end: box cleared, draft
+    // dropped, nothing on the wire, nothing on screen. Measured in a browser.
+    if (drainQueueToBox(t)) {
+      addTurn(t, "system", "", "Your unsent message is back in the box — the link dropped before it was sent.");
+    }
     const n = t.reconnectAttempts++;
     const delay = Math.min(15000, 1000 * 2 ** n) + Math.floor(Math.random() * 500);
     setTabState(t, "dead", "link lost — reconnecting…");
@@ -6195,6 +6205,11 @@
         if (msg.lastTurnMs) showFrozenTime(t, msg.lastTurnMs);
         else t.timerEl.classList.add("done"); // freeze whatever's shown; don't keep ticking
         addTurn(t, "system", "", "Session established. The pilot has the controls.");
+        // Backstop to the same rule: "ready" asserts the process is idle NOW,
+        // so there is no turn in flight to wait on — whatever path got us here.
+        if (drainQueueToBox(t)) {
+          addTurn(t, "system", "", "Your unsent message is back in the box — the turn it was waiting for is over.");
+        }
         if (t === active) promptInput.focus();
         break;
       case "working":

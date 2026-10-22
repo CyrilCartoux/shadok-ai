@@ -1281,6 +1281,17 @@ Auth section of `docs/architecture.md`).
     that dies before flushing (`error`/`exited`/`gone`/`pace-blocked`) hands the
     queued text back to the box (`drainQueueToBox`), never strands it. Verified
     end to end against a live agent: two fast messages both answered, no refusal.
+    **And the latch must drop when the LINK dies, not only when a turn settles.**
+    A reattach sends `working` only `if (session.busy)` — so a socket drop INSIDE
+    the gap whose turn then finished while the client was away leaves no event at
+    all to clear `awaitingTurn`: every later Enter queued behind a turn that will
+    never end, with the box cleared, the draft dropped, nothing on the wire and
+    nothing on screen — the very silent loss this invariant exists to kill, and a
+    reload does not recover it. `scheduleReconnect` (the socket that owed us the
+    `working` is gone) and `ready` (which asserts the process is idle NOW) both
+    drain the queue back to the box and say so. Measured in a browser against a
+    server replaying that exact reattach: unfixed, the second message never
+    reaches the wire; fixed, it does — as it does on the code before this change.
 
 
 ## Conventions
