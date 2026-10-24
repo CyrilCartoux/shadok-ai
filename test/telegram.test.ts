@@ -18,6 +18,7 @@ import {
   chunk,
   parseCommand,
   dialogKeyboard,
+  dialogText,
   parseCallback,
   makeTyping,
   mdToTelegramHtml,
@@ -1086,4 +1087,20 @@ test("a prompt queued before the socket is ready arrives exactly like a live one
   // message that bothered to say so.
   assert.deepEqual(promptFrame("hello"), { type: "prompt", text: "hello" });
   assert.deepEqual(promptFrame("hi", "", false), { type: "prompt", text: "hi" });
+});
+
+test("dialogText: the box's body comes first, then the question — as the TUI draws it", () => {
+  const body = "Read file\nThis will read /x/outside/note.txt (outside working directory) via a symlink\nRead(/x/cwd/link)";
+  assert.equal(dialogText({ question: "Do you want to proceed?", body }), body + "\n\nDo you want to proceed?");
+});
+
+test("dialogText: no body → the question alone, as before", () => {
+  assert.equal(dialogText({ question: "Pick one?" }), "Pick one?");
+  assert.equal(dialogText({ question: "", body: "  " }), "Choose:");
+});
+
+test("dialogText: an oversized body is cut, never the question the buttons answer", () => {
+  const t = dialogText({ question: "Do you want to proceed?", body: "x".repeat(5000) }, 100);
+  assert.ok(t.length <= 100, String(t.length));
+  assert.ok(t.endsWith("…\n\nDo you want to proceed?"), t);
 });

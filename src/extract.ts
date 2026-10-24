@@ -69,6 +69,17 @@ export interface TuiDialog {
    * pressing the digit selects and validates directly.
    */
   multi: boolean;
+  /**
+   * The dialog box's own text above the question — a permission prompt's title,
+   * what it will do and to what ("Read file" / "This will read … (outside working
+   * directory) via a symlink" / "Read(…)"). It is what a person judges the
+   * request by, and the TUI shows it; without it a web or Telegram card asked
+   * "Do you want to proceed?" about nothing. One string, lines joined by "\n",
+   * hard-wrapped lines rejoined. Absent when the box has none (AskUserQuestion)
+   * or when its top border cannot be found. Deliberately NOT part of
+   * `dialogKey`: it is description, not identity.
+   */
+  body?: string;
 }
 
 /**
@@ -186,18 +197,96 @@ export function detectDialog(screen: string): TuiDialog | null {
   if (!chosen || chosen.options.length < 2) return null;
   const { options, multi, firstLine: firstOptionLine } = chosen;
 
+  // The dialog box starts below a full-width "────" rule. Bounding the walk
+  // there keeps a transcript line ABOVE the box ("● …") from being read as the
+  // question when the box holds no plain question line — the model-safeguards
+  // form, whose whole text sits behind a "│" gutter. No rule found → the old
+  // unbounded walk, and no body (we cannot tell the box from the transcript).
+  let boxTop = -1;
+  for (let i = firstOptionLine - 1; i >= 0; i--) {
+    if (/^─{10,}$/.test(lines[i].trim())) {
+      boxTop = i;
+      break;
+    }
+  }
+  const width = boxTop >= 0 ? [...lines[boxTop].trim()].length : 0;
+
   // The question: the text lines right above the first option (skipping
   // frames, separators and the "← ☐ … ✔ Submit →" tab bar).
   const questionLines: string[] = [];
-  for (let i = firstOptionLine - 1; i >= 0; i--) {
+  let questionStart = firstOptionLine;
+  for (let i = firstOptionLine - 1; i > boxTop; i--) {
     const t = lines[i].trim();
     if (t === "" || FRAME_LINE.test(t) || /[☐☒]|✔\s*Submit/.test(t)) {
       if (questionLines.length) break;
       continue;
     }
     questionLines.unshift(t);
+    questionStart = i;
   }
-  return { question: questionLines.join(" "), options, multi };
+  // Nothing but a "│"-gutter block above the options: that block IS the
+  // question (the safeguards form ends it with "Switch to Opus 4.8 …?").
+  if (!questionLines.length && boxTop >= 0) {
+    for (let i = firstOptionLine - 1; i > boxTop; i--) {
+      const t = lines[i].trim();
+      if (t.startsWith("│")) {
+        questionLines.unshift(t.replace(/^│\s?/, "").trim());
+        questionStart = i;
+      } else if (questionLines.length) break;
+    }
+  }
+  const body = boxTop >= 0 ? dialogBody(lines.slice(boxTop + 1, questionStart), width) : "";
+  return { question: questionLines.join(" "), options, multi, ...(body ? { body } : {}) };
+}
+
+/** Box furniture that is never body text: `FRAME_LINE` minus the "│" gutter
+ *  (which, inside the box, PREFIXES content), the tab bar, and an
+ *  AskUserQuestion header chip ("☐ Layout"). */
+function isBodyChrome(t: string): boolean {
+  return (!t.startsWith("│") && FRAME_LINE.test(t)) || /[☐☒]|✔\s*Submit/.test(t);
+}
+
+/**
+ * The box's text above the question, as the TUI meant it rather than as it was
+ * wrapped. Each line loses its padding and any "│" gutter; chrome and blanks
+ * only separate lines. A wrapped line is rejoined to the next one, the HOW
+ * read off the geometry, the way the TUI's wrapper decided it:
+ *  - the token across the break could not fit on ANY row (a long path) → it was
+ *    cut mid-token, glue with nothing — a path with a space in it is a lie;
+ *  - the next line's first word would not have fit after this one → word wrap,
+ *    join with a space;
+ *  - otherwise the TUI broke the line itself → keep the "\n".
+ * The worst a misjudged wrap does is a space or a line break in the wrong place.
+ */
+function dialogBody(region: string[], width: number): string {
+  const out: string[] = [];
+  // The previous content line (raw, for its end column) when it may continue.
+  let prev: string | null = null;
+  for (const raw of region) {
+    const t = raw.trim();
+    if (t === "" || isBodyChrome(t)) {
+      prev = null;
+      continue;
+    }
+    const text = t.replace(/^│\s?/, "").trim();
+    if (!text) continue;
+    if (prev !== null && out.length) {
+      const end = [...prev].length;
+      const lastTok = prev.trim().split(/\s+/).pop() ?? "";
+      const firstTok = text.split(/\s+/)[0];
+      if ([...lastTok].length + [...firstTok].length > width - 4) {
+        out[out.length - 1] += text;
+      } else if (end + 1 + [...firstTok].length > width) {
+        out[out.length - 1] += " " + text;
+      } else {
+        out.push(text);
+      }
+    } else {
+      out.push(text);
+    }
+    prev = raw;
+  }
+  return out.join("\n");
 }
 
 /**

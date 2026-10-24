@@ -82,7 +82,9 @@ Enter to skip; you can add it later from the web UI).
   stays (and `Recover` reopens it).
 - **Interactive dialogs** — the TUI's permission prompts and multiple-choice
   questions become clickable buttons in the chat, and an inline keyboard in
-  Telegram.
+  Telegram. The card carries the prompt's own text too — what it will run or
+  read, and Claude Code's warnings such as a read leaving the working directory
+  through a symlink — so you approve what the terminal would have shown you.
 - **Thinking effort** — how hard an agent thinks before answering (`--effort`),
   set on a role in the Profiles panel and overridable per agent from its menu.
   Higher levels cost more tokens, and thinking tokens are billed even when they

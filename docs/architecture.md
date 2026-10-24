@@ -291,8 +291,23 @@ channel reachable from the mobile channel selector like any other.
 ## Interactive dialogs
 
 `detectDialog(screen)` finds numbered options with a `❯` selector, strips any
-right-hand preview column, and returns `{question, options[], multi}`. The UI
-renders clickable buttons; Telegram renders an inline keyboard.
+right-hand preview column, and returns `{question, options[], multi, body?}`.
+The UI renders clickable buttons; Telegram renders an inline keyboard.
+
+`body` is the dialog box's own text above the question — a permission prompt's
+title, what it will do and to what (`Read file` / `This will read … (outside
+working directory) via a symlink` / `Read(…)`). The box is bounded by the
+full-width `────` rule above it; inside, `╌╌╌` rules, the tab bar and an
+AskUserQuestion header chip are furniture, and a `│` gutter is stripped. Lines
+the TUI wrapped are rejoined from the geometry (a token too long for any row
+was cut mid-token → glued; a next word that would not have fit → a space;
+otherwise the TUI's own break is kept), because a path with a space in it is
+exactly what a person must not be shown when judging a read. Both clients put
+it above the question; Telegram cuts the body's tail, never the question, to
+stay under the message limit (`dialogText`). It is NOT part of `dialogKey`:
+it is description, not identity, so a repaint cannot re-announce a question —
+and `settleStep` can still settle on a dialog whose body carries a ticking
+auto-deny countdown.
 
 The question is read by walking up from the first option and stopping at the
 first line of décor (`FRAME_LINE`: a line that *starts* with a frame, rule or

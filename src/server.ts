@@ -3638,6 +3638,11 @@ const SUBMIT_PAGE = /ready to submit|submit answers/i;
  * the client replaces it with the authoritative block from the tail. The web
  * ignores it, it already has its grey bubble; the Telegram bridge is what uses
  * it.
+ *
+ * Not to be confused with `d.body`, which rides along in the spread: that one
+ * is the dialog box's OWN text (a permission prompt's "This will read … via a
+ * symlink", its `Read(…)` target), read by `detectDialog`, and both clients
+ * render it — it is what the person approving judges the request by.
  */
 function dialogMessage(s: Live, d: TuiDialog): object {
   const preface = extractLiveText(s.pilot.screen());

@@ -854,6 +854,31 @@ interface Dialog {
   question: string;
   options: DialogOption[];
   multi: boolean;
+  /** The dialog box's own text (`TuiDialog.body`): what a permission prompt
+   *  will do and to what — e.g. Claude Code's "(outside working directory) via
+   *  a symlink" disclosure. */
+  body?: string;
+}
+
+/**
+ * The text of the message that carries a dialog's keyboard: the box's body,
+ * then the question — the order the TUI draws them in. Without the body a
+ * permission prompt read "Do you want to proceed?" about nothing, while the
+ * same person at the terminal could see the read escaped the working directory.
+ *
+ * Bounded because this message does not go through `chunk()` (the keyboard
+ * cannot be cut in two) and past Telegram's limit the send fails — no keyboard
+ * at all. When something must go it is the BODY's tail: the question is what
+ * the buttons answer.
+ */
+export function dialogText(d: Pick<Dialog, "question" | "body">, limit = MSG_LIMIT): string {
+  const q = (d.question || "Choose:").slice(0, limit);
+  const body = d.body?.trim();
+  if (!body) return q;
+  const room = limit - q.length - 2;
+  if (room < 20) return q;
+  const b = body.length > room ? body.slice(0, room - 1) + "…" : body;
+  return b + "\n\n" + q;
 }
 
 /** Inline keyboard for a TUI dialog. Single-select → one button per option
@@ -1361,11 +1386,12 @@ export function startTelegram(port: number, authCookie?: string): TelegramHandle
               tg("sendMessage", {
                 chat_id: b.chatId,
                 ...(b.threadId ? { message_thread_id: b.threadId } : {}),
-                // Truncated: this message does not go through `chunk()` (it
-                // carries the keyboard, which cannot be cut in two). Past
-                // Telegram's limit the send failed — so NO keyboard at all, and
-                // the turn stayed suspended on an unreachable question.
-                text: (m.question || "Choose:").slice(0, MSG_LIMIT),
+                // Body + question, bounded: this message does not go through
+                // `chunk()` (it carries the keyboard, which cannot be cut in
+                // two). Past Telegram's limit the send failed — so NO keyboard
+                // at all, and the turn stayed suspended on an unreachable
+                // question. See `dialogText`.
+                text: dialogText(m),
                 reply_markup: dialogKeyboard(m),
               }).then((r) => {
                 if (r?.ok) b.dialogMsgId = r.result.message_id;
