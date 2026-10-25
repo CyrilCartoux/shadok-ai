@@ -118,7 +118,7 @@ both are silent in the DOM.
 | `src/heartbeat.ts` | Keeps **idle** `/ws` connections alive behind a reverse proxy: an idle agent sends no traffic, so a proxy (nginx `proxy_read_timeout` 60s, Cloudflare ~100s) cuts the socket and the client loops on "reconnecting" — with nothing actually broken. `startHeartbeat(wss)` pings every client every 25s (`SHADOK_WS_PING_MS`) and `terminate()`s the one that misses its pong. `heartbeatSweep` is pure, tested. |
 | `src/config.ts` | `~/.shadok-ai/config.json` (600): port, **per-launch-dir** Telegram token/allowed chats/on-off, GUI password, `autoUpdate`, `permissionMode`, `timezone`, `cockpitTitle` (**per-launch-dir** display name, `titleForCwd`/`setTitleForCwd` — the header brand + browser tab, so several cockpits stay apart), and `cockpitTheme` (**per-launch-dir** colour palette key, `themeForCwd`/`setThemeForCwd`, validated against `COCKPIT_THEMES`; default/unknown → cleared). Config is authoritative over env once set. |
 | `src/crons.ts` | Per-channel scheduled prompts (`~/.shadok-ai/crons/<enc>.json`) + the deterministic `check` that avoids waking the LLM for nothing. Three `kind`s: `interval`, `daily` and `once` (an absolute instant, fired a single time — `stateAfterFire` DISABLES it before the fire, since it cannot advance to a next slot, and `settleCron` re-arms it on a transient loss). `nextRunFor` computes a `daily` in an **explicit IANA zone** (`cron.tz` → config `timezone` → machine): without it the hour follows the machine, and a server running UTC shifts everything silently. `nextRunAfterFailure` decides where to reschedule a fire whose delivery was lost (see invariant 15). WHERE a cron runs is no longer decided here: `fireCron` calls `resolveSessionTarget` (`channels.ts`) once and hands the result to the guard AND to the resume (see invariant 1). The fire itself lives in `server.ts` (`cronTick` / `fireCron` / `driveChannel` / `settleCron`). Also carries `CRON_PROMPT_MARK`: a cron prompt's text is prefixed, because it ends up in the transcript like an ordinary user message — hiding only the direct echo let it come back on a web reload and in a Telegram backfill, both of which re-read `loadHistory`. Twin of `NOTHING TO SHOW`. |
-| `src/lock.ts` | Single-instance lock, keyed by launch dir: two servers from the same directory share a registry and a Telegram bridge, so the second refuses to start. `pidAlive` treats a **zombie** as dead — `kill(pid, 0)` succeeds on one, and in a container pid 1 is the application rather than an init that reaps, so a stopped instance held its lock FOREVER and every later start was refused while naming a pid that no longer existed. It reads `/proc/<pid>/stat` (`stateFromProcStat`, pure and tested — parsed from the LAST `)`, since the command name is parenthesised and may itself contain spaces and brackets); with no `/proc` the signal's answer stands. |
+| `src/lock.ts` | Single-instance lock, keyed by launch dir: two servers from the same directory share a registry and a Telegram bridge, so the second refuses to start. `pidAlive` treats a **zombie** as dead — `kill(pid, 0)` succeeds on one, and in a container pid 1 is the application rather than an init that reaps, so a stopped instance held its lock FOREVER and every later start was refused while naming a pid that no longer existed. It reads `/proc/<pid>/stat` (`stateFromProcStat`, pure and tested — parsed from the LAST `)`, since the command name is parenthesised and may itself contain spaces and brackets); with no `/proc` the signal's answer stands. The lock records the holder's **start time** beside its pid (`formatLockFile` / `parseLockFile` / `holderStillThere`, pure, tested): a pid NUMBER is not an identity, and in a container it is reused on every restart — see invariant 45. |
 | `src/kinship.ts` | Who launched whom, and what a parent is told about it. `linkRefusal` (self / cycle / unknown parent / depth / fan-out — every refusal **explicit**, never a silently dropped field), `chainDepth`, `childrenOf`, `notificationText` (the child's own summary + pointers, **never the diff**: the parent is the biggest session in the tree), and `AGENT_PROMPT_MARK` — twin of `CRON_PROMPT_MARK`, since a notification also lands in the transcript as an ordinary user message. Pure, tested. The delivery itself lives in `server.ts` (`notifyParent` / `deliverToParent` / `parentInbox` / `flushParentInbox`). |
 | `src/promptmeta.ts` | The context header prepended to a HUMAN prompt (web/telegram/cli) before it reaches the TUI: `⟦platform · time · who⟧` on its own first line. The agent sees it (who is talking, when — nothing else told it); the display strips it (`stripPromptMeta`), cousin of the cron/agent marks — but here only the header line goes, the message stays. `promptMetaHeader`/`markPromptMeta`/`stripPromptMeta`/`hasPromptMeta`/`parsePromptMeta` are pure, tested. Applied in `server.ts` (the `prompt` handler, before `pilot.submit`; the echo stays clean) and stripped in `extract.ts` (`loadHistory`). NOT added to terminal input nor cron/agent prompts. A transcribed **voice note** is marked in the PLATFORM field (`⟦telegram vocal · …⟧`, from a `voice: true` on the `prompt` message) and deliberately NOT through a different `origin`: the server adds the header only when the origin is exactly `web`/`telegram`/`cli`, so an origin of `telegram vocal` would have dropped the whole header — time and sender — to gain one word. `parsePromptMeta` reads the platform first and the sender as everything past the time, so neither is widened; verified end to end, the transcript receives the mark with both intact. The mark gives the agent a FACT; the BEHAVIOUR lives in the pilot prompt (read intention over letter, ask when a load-bearing token looks garbled), locked by `test/skill-auth-docs.test.ts`. `loadHistory` also `parsePromptMeta`s the header it strips, carrying `from`/`origin` onto the `HistoryTurn` so a REPLAYED message shows who spoke via the client's `echoAuthor` (Ada · telegram for a Telegram message; "you" for your own web prompt — the human driving the cockpit, no longer the metaphor label "pilot") — without it a Telegram sender came back as the generic "pilot" on every reload. |
 | `src/secrets.ts` | Central secret vault (`~/.shadok-ai/secrets.json`, 600). Profiles reference secrets **by name**; values are injected as env at spawn. `secretWriteVerdict` (pure, tested) is the no-silent-overwrite rule behind `PUT /secrets`: an existing name is refused unless the caller passes `overwrite: true`. HTTP is the only way an AGENT can reach the vault (Telegram's `/secret` calls `setSecret()` directly), so that endpoint is exactly the machine boundary. |
@@ -1375,6 +1375,37 @@ Auth section of `docs/architecture.md`).
     Reproduced minimally on the same host, three runs of one image: with node
     as pid 1, a single orphaned `sleep` leaves one zombie; with `tini` as pid 1,
     and with `docker run --init`, it leaves none.
+45. **A pid number is not an identity — and in a container it is handed out
+    again on every restart.** The single-instance lock wrote the holder's pid
+    and nothing else, and `pidAlive` answered the only question it could: is
+    *some* process wearing that number. Those two questions come apart exactly
+    where it hurts. A container's pid namespace restarts at 1, the supervisor's
+    own children take the first dozen slots and the server itself lands around
+    15 — so the number the previous run wrote is, next boot, almost certainly
+    worn by an unrelated process. Observed in production while restarting a
+    container: `another instance is already running from this directory (pid 14)
+    — exiting`, where 14 was a node the supervisor had just spawned, and the
+    real previous server was long dead.
+    The failure is the quiet shape again. That refusal **exits 0** on purpose
+    (so a supervisor reads a clean stop and does not crash-loop, cf. the SIGTERM
+    path), so the container simply stays down with one line in the log and
+    nothing wrong anywhere else: the cockpit is gone, every agent with it, and
+    the next person to look finds a stopped container and no cause. It is also
+    a coin flip, which is worse than a bug that always fires — a restart that
+    works proves nothing about the next one.
+    The fix is to record WHO, not just WHICH slot: the lock line is now
+    `<pid> <starttime>` (field 22 of `/proc/<pid>/stat`, ticks since boot), and
+    a live pid whose start time differs from the lock's is a different process,
+    so the lock is stale and reclaimed. A reused pid would have to have been
+    born on the same tick as the holder. Three properties are deliberate: the
+    line still STARTS with the pid, so a lock written by this version is read
+    correctly by an older one; a lock carrying no start time keeps the old
+    pid-only verdict (there is nothing to compare, and the next successful
+    acquire rewrites it); and where there is no `/proc` at all the pid's answer
+    still stands, as it already did for the zombie case.
+    This became reachable the moment restarts became routine — invariant 44's
+    campaign gives every container a small lock pid on its way out, which is
+    precisely the collision-prone range.
 
 ## Conventions
 
