@@ -327,6 +327,20 @@ are what survive `docker restart` **and** `docker rm`+recreate: `~/.shadok-ai`
 transcripts), `/workspace` (agents' files). A fresh container needs a one-time
 Claude login: `docker exec -it shadok-ai claude`.
 
+**pid 1 reaps.** The image enters through `tini`, and that is load-bearing in the
+long run: agents orphan processes all day (a backgrounded `sleep` loop, an
+abandoned `esbuild`, a killed `gh`), an orphan is re-parented to pid 1, and only
+pid 1 can reap it — which the cockpit's own supervisor never does, since Node
+only waits for the children it spawned itself. A zombie costs no memory and no
+CPU, just a pid slot, so nothing shows until the container's pid budget runs out
+and it can no longer fork anything at all: no new agent, no `git`, no shell.
+Measured on an instance running since August: 79,055 zombies against a 113,098
+pid budget. Two things follow for an existing deployment. If you run an image
+from before this (or any image whose pid 1 is the app), add `--init` and Docker
+supplies the reaper. And either way it is decided when the container is
+**created**: `docker restart` empties the table — pid 1 restarts, the kernel
+drops the lot — but the leak starts over, so a recreate is what makes it stop.
+
 ### Exposing it beyond this machine
 
 The cockpit runs arbitrary commands on the host by design, so it binds
