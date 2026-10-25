@@ -110,7 +110,7 @@ both are silent in the DOM.
 | `src/main.ts` | The `npx shadok-ai` entry point: parses flags, first-run token prompt, then runs the **supervisor**. Not the server. |
 | `src/supervisor.ts` / `src/updater.ts` / `src/update-flag.ts` | Self-update: the supervisor runs the npm-installed server as a child, restarts it on the update exit code; the updater installs the channel's resolved version into `~/.shadok-ai/app` (an EXACT version, never a tag — the caller already chose). |
 | `src/update-channel.ts` | Which release stream an instance follows: `alpha` (every merge) or `beta` (promotions only, the default). Pure `resolveChannel` (anything malformed → `beta`, never a throw) and `pickTarget` (alpha takes the newer of `alpha`/`latest`, so a promotion cannot make the fast channel downgrade). The beta channel reads the `latest` dist-tag — see invariant 29. |
-| `Dockerfile` | The official image (README "Running in Docker"): Claude Code + shadok-ai + a **bundled headless browser** (Playwright Chromium at `/opt/playwright-browsers`, `--with-deps` so the OS libs are present), plus `git`/`gh`/`tmux`/toolchain. COPYs nothing (installs from npm); `.dockerignore` is `*`. NB: NOT what a given deployment necessarily runs — the live VPS builds from a host-side Dockerfile of its own. |
+| `Dockerfile` | The official image (README "Running in Docker"): Claude Code + shadok-ai + a **bundled headless browser** (Playwright Chromium at `/opt/playwright-browsers`, `--with-deps` so the OS libs are present), plus `git`/`gh`/`tmux`/toolchain. COPYs nothing (installs from npm); `.dockerignore` is `*`. Enters through **tini**, so pid 1 reaps orphans — see invariant 44. NB: NOT what a given deployment necessarily runs — the live VPS builds from a host-side Dockerfile of its own. |
 | `src/open-browser.ts` | Opens the cockpit on launch. Done by the SERVER, not the supervisor, because only it knows the port the walk landed on (`START_PORT` is where the walk BEGINS). The supervisor sets `SHADOK_OPEN=1` on the FIRST spawn only — it respawns the server on every auto-update, and a tab popping open several times a day is a nuisance. `shouldOpenBrowser` / `openCommand` are pure and tested; refuses in a container, over SSH, and on a display-less Linux. Fire-and-forget: a browser that will not open must never keep the server from serving. |
 | `src/preprompt.ts` | Pure `prepromptParts` — what shadok adds to an agent's context, as labelled sections with their source. Captured in `makePilot` AT SPAWN and kept in `prepromptById`, never recomputed: a profile or the permission mode can change under a live agent, and the panel must show what the RUNNING process got (the gap the UI already models as `profile` vs `appliedProfile`). It takes secret **names**, never values — values live in the child's env and never in its args, so the signature makes a leak impossible rather than merely unlikely. Sent with every `ready`, so it survives a reload. The **capabilities** section is read from DISK at spawn rather than assumed from the seeded list: a seed that failed must show as missing. Skills are listed by DESCRIPTION only, because that is what Claude Code loads into context — the body is read when it decides to use one — and because they are installed for the whole machine and rewritten at every boot, which the panel says on screen. |
 | `src/csp.ts` | The Content-Security-Policy (`cspHeader`) and the nonce injection into the page (`injectNonce`, marker `__CSP_NONCE__`). Also `injectAssetVersion` (`__ASSET_V__`) and `injectInstanceKey` (`__INSTANCE_KEY__`) — the launch-dir key stamped into the page so the client namespaces its localStorage channel cache SYNCHRONOUSLY (invariant 34). Pure, tested. See invariant 12. |
@@ -1340,6 +1340,41 @@ Auth section of `docs/architecture.md`).
     (local username replaced by one of the same length, so every wrap lands
     where it did). The card shows the body as first published, so a countdown
     in it is frozen at that second — still the right warning, not a live clock.
+
+44. **In a container, pid 1 is ours and pid 1 is the only reaper — so every
+    orphan an agent leaves becomes a permanent zombie.** The supervisor is pid 1
+    (`docker-entrypoint.sh` execs it), and Node waits only for children it
+    spawned itself. A process whose own parent exits is re-parented to pid 1, so
+    nobody ever waits for it: it stays in the process table as a zombie for the
+    life of the container. Agents produce those by the thousand without doing
+    anything wrong — a backgrounded `sleep` loop whose shell was killed, an
+    `esbuild` service left behind, a `gh` that outlived its `bash`.
+    The reason this ran for months unseen is that a zombie is almost free: no
+    memory, no CPU, no log line, nothing on screen. It costs one pid slot. So
+    the only symptom is the end state, and the end state is total: once the
+    cgroup's pid budget is spent the container cannot fork AT ALL — no new
+    agent, no `git`, no shell, including for whoever is trying to diagnose it.
+    Measured on the fleet (2026-10-25, every container, none with `--init`):
+    the two-month-old instance held **79,055 zombies of a 113,098 pid budget**
+    (70%), a nine-day-old one 39,121 — all with ppid 1, 55% `sleep`, 27%
+    `bash`, 13% `esbuild`. An earlier look at the same numbers was recorded as a
+    live "process leak" of sleep/bash/esbuild and sent the diagnosis towards
+    polling loops that were never terminated; they were already dead. **A pid
+    count is not a load measurement** — read the state column before concluding.
+    The fix is to not be pid 1: the image enters through `tini`
+    (`ENTRYPOINT ["/usr/bin/tini", "--", "docker-entrypoint.sh"]`), which reaps
+    orphans as they appear and forwards signals, so the supervisor's exit codes
+    — which decide a restart, cf. the SIGTERM path — are unchanged. `docker run
+    --init` is the same thing for an image that lacks it. Two operational
+    consequences, both learned here: it is decided at **creation**, so a
+    `docker restart` empties the table (pid 1 restarts) while the leak starts
+    over, and only a recreate ends it; and `src/lock.ts` already carried the
+    other half of this fact — it must treat a zombie as dead, "because in a
+    container pid 1 is the application rather than an init that reaps" — which
+    is a workaround for a cause nobody had removed.
+    Reproduced minimally on the same host, three runs of one image: with node
+    as pid 1, a single orphaned `sleep` leaves one zombie; with `tini` as pid 1,
+    and with `docker run --init`, it leaves none.
 
 ## Conventions
 
