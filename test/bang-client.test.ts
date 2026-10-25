@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bangCommands, MAX_BANG_PER_MESSAGE } from "../public/bang.js";
+import { bangCommands, blockCommand, MAX_BANG_PER_MESSAGE } from "../public/bang.js";
 
 test("an inline `! cmd` is offered, quotes intact", () => {
   // The exact shape that prompted this feature.
@@ -31,4 +31,32 @@ test("duplicates collapse and the list is bounded", () => {
 test("nothing to offer yields nothing", () => {
   assert.deepEqual(bangCommands(""), []);
   assert.deepEqual(bangCommands(undefined), []);
+});
+
+test("blockCommand: a one-line `! cmd` block is runnable, trailing newline and all", () => {
+  // marked leaves a trailing newline on the code element's text.
+  assert.equal(blockCommand("! claude --version\n"), "claude --version");
+  assert.equal(
+    blockCommand("! ssh ubuntu@host 'sudo /home/ubuntu/reap-fix.sh url2ad'"),
+    "ssh ubuntu@host 'sudo /home/ubuntu/reap-fix.sh url2ad'",
+  );
+});
+
+test("blockCommand: what the inline button offers equals what bangCommands offers", () => {
+  // The two must never disagree about a command's spelling.
+  const code = "! ssh ubuntu@host 'docker exec shadok-ai claude --version'\n";
+  assert.equal(blockCommand(code), bangCommands(code)[0]);
+});
+
+test("blockCommand: a multi-line block is NOT one runnable command", () => {
+  // Shell mode reads one line; a glued two-line command would be wrong.
+  assert.equal(blockCommand("! cd /tmp\n! ls"), null);
+  assert.equal(blockCommand("! make build\nnpm test"), null);
+});
+
+test("blockCommand: a block that is not a command yields null", () => {
+  assert.equal(blockCommand("const x = 1;"), null);
+  assert.equal(blockCommand("Done! ship it"), null);   // `!` not at the start
+  assert.equal(blockCommand(""), null);
+  assert.equal(blockCommand(undefined), null);
 });

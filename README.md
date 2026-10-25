@@ -167,11 +167,14 @@ Enter to skip; you can add it later from the web UI).
   a bot may download at 20 MB; past that you get a clear notice instead of
   silence.
 - **Run the command an agent asks you to** — when an agent writes `! cmd` for
-  you to run (typically because it cannot), a ▶ button under its message runs it
-  in the agent's shell after a confirmation showing the exact command. It is
-  refused for anything but your browser, since shell mode sits outside the
-  agent's guardrails. The command and its output stay in the chat, reload
-  included — as does one you typed yourself in the terminal view.
+  you to run (typically because it cannot), a ▶ run button sits right on that
+  command's code block, beside its copy button — so it runs where it was
+  written, not in a list below. (An inline `` `! cmd` `` with no block of its
+  own still gets a button under the message.) It runs in the agent's shell after
+  a confirmation showing the exact command, and is refused for anything but your
+  browser, since shell mode sits outside the agent's guardrails. The command and
+  its output stay in the chat, reload included — as does one you typed yourself
+  in the terminal view.
 - **Files you hand an agent** — paste or drop a file into the composer (an
   image, a PDF, a CSV…) and it becomes a **chip** above the text box: a
   thumbnail for an image, a named tag for anything else, each with a ✕ to

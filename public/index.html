@@ -1051,6 +1051,20 @@
     opacity: 1; color: var(--amber); border-color: var(--amber);
   }
   .bubble.md .md-code-copy.done { opacity: 1; color: var(--ok, #7ac77a); border-color: currentColor; }
+  /* When a fenced block is a `! cmd` the agent asks you to run, a "▶ run" button
+     joins the copy button in a top-right toolbar — so the command is runnable IN
+     the text, beside where the agent wrote it, instead of repeated in a list
+     below. The toolbar is the positioned element; the copy button inside it goes
+     static and keeps its own styling. */
+  .bubble.md .md-code-tools { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; align-items: flex-start; }
+  .bubble.md .md-code-tools .md-code-copy { position: static; top: auto; right: auto; }
+  .bubble.md .md-code-run {
+    padding: 2px 7px; font-family: var(--mono); font-size: 10px; line-height: 1.4;
+    cursor: pointer; background: var(--amber-soft); border: 1px solid var(--amber);
+    border-radius: 6px; color: var(--text); opacity: 0.9;
+    transition: opacity 0.12s;
+  }
+  .bubble.md .md-code-run:hover, .bubble.md .md-code-run:focus-visible { opacity: 1; }
   /* The horizontal scroll for a wide table lives on this wrapper (added in JS
      after sanitising), NOT on the <table>: `display:block` on a table breaks its
      own layout — thead and tbody stop sharing column widths, so the header row
@@ -2490,8 +2504,9 @@
   import { pickChannelSource, dirKey, serverSwapped } from "/channel-store.js?v=__ASSET_V__";
   import { MODEL_CHOICES, composeModel } from "/model-choice.js?v=__ASSET_V__";
   import { EFFORT_CHOICES, effortLabel } from "/effort-choice.js?v=__ASSET_V__";
-  import { bangCommands } from "/bang.js?v=__ASSET_V__";
+  import { bangCommands, blockCommand } from "/bang.js?v=__ASSET_V__";
   window.bangCommands = bangCommands;
+  window.blockCommand = blockCommand;
   import { claudeUpdateState } from "/update-ready.js?v=__ASSET_V__";
   window.claudeUpdateState = claudeUpdateState;
   import { uploadFailure } from "/upload.js?v=__ASSET_V__";
@@ -2599,6 +2614,8 @@
     effortLabel: () => "profile default",
     // No module, no buttons: an agent's message renders exactly as before.
     bangCommands: () => [],
+    // No module → no block is runnable, so no inline run button (copy only).
+    blockCommand: () => null,
     // Boot-critical (runs in restore before the module might land): a fulfilled
     // /channels wins even when empty; only a failed fetch uses the cache.
     pickChannelSource: (settled, cached) =>
@@ -4979,32 +4996,66 @@
     return "/download?session=" + encodeURIComponent(tab.sessionId || "") +
            "&path=" + encodeURIComponent(file.path);
   }
+  /** Run a `! cmd` the agent offered: one confirmation, then the command in the
+   *  agent's pane shell mode. The confirmation is not ceremony — shell mode is
+   *  not the agent's Bash tool, so a profile's guardrails do not apply to it
+   *  (measured) — this is the human choosing to run something the agent could
+   *  not, and the dialog is where the human sees exactly what that is. */
+  function runBang(tab, cmd) {
+    if (!confirm("Run this command in the agent's shell?\n\n" + cmd +
+        "\n\nIt runs on the machine, outside the agent's guardrails.")) return;
+    sendTo(tab, { type: "run", command: cmd });
+  }
+
   /**
-   * Buttons under an agent's message for each `! cmd` it asks YOU to run.
+   * Make the `! cmd` commands an agent asks YOU to run clickable.
    *
-   * One click, one confirmation, one command in the agent's pane shell mode.
-   * The confirmation is not ceremony: shell mode is not the agent's Bash tool,
-   * so a profile's guardrails do not apply to it (measured) — this is the human
-   * choosing to run something the agent could not, and the dialog is where the
-   * human sees exactly what that is.
+   * Preferred placement is IN the text: a compact "▶ run" button joins the copy
+   * button on every fenced code block that is exactly one `! cmd` line, so the
+   * command stays where the agent wrote it instead of being repeated in a list.
+   * Commands with no block of their own — an inline `` `! cmd` ``, a bare line —
+   * fall back to a row of buttons below, so none is ever lost.
    */
   function decorateBang(tab, bubble, text) {
     const cmds = window.bangCommands(text);
     if (!cmds.length || !bubble) return;
+    const allowed = new Set(cmds);
+    const placed = new Set();
+    // Inline on each runnable code block, beside its copy button.
+    for (const wrap of bubble.querySelectorAll(".md-code")) {
+      const code = wrap.querySelector("code") || wrap.querySelector("pre");
+      const cmd = window.blockCommand(code && code.textContent);
+      if (!cmd || !allowed.has(cmd) || placed.has(cmd)) continue;
+      let tools = wrap.querySelector(".md-code-tools");
+      if (!tools) {
+        tools = document.createElement("div");
+        tools.className = "md-code-tools";
+        const copy = wrap.querySelector(".md-code-copy");
+        if (copy) { copy.replaceWith(tools); tools.appendChild(copy); }
+        else wrap.appendChild(tools);
+      }
+      const run = document.createElement("button");
+      run.type = "button";
+      run.className = "md-code-run";
+      run.textContent = "▶ run";
+      run.title = "Run in this agent's shell: " + cmd;
+      // never onclick=: the CSP nonce does not cover inline handlers
+      run.addEventListener("click", (e) => { e.stopPropagation(); runBang(tab, cmd); });
+      tools.insertBefore(run, tools.firstChild);
+      placed.add(cmd);
+    }
+    // Whatever didn't land on a block still gets a button, below.
+    const rest = cmds.filter((c) => !placed.has(c));
+    if (!rest.length) return;
     const row = document.createElement("div");
     row.className = "bang-row";
-    for (const cmd of cmds) {
+    for (const cmd of rest) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "bang-btn";
       b.textContent = "▶ " + cmd;
       b.title = "Run in this agent's shell: " + cmd;
-      // never onclick=: the CSP nonce does not cover inline handlers
-      b.addEventListener("click", () => {
-        if (!confirm("Run this command in the agent's shell?\n\n" + cmd +
-            "\n\nIt runs on the machine, outside the agent's guardrails.")) return;
-        sendTo(tab, { type: "run", command: cmd });
-      });
+      b.addEventListener("click", () => runBang(tab, cmd));
       row.appendChild(b);
     }
     bubble.appendChild(row);
