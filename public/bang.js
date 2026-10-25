@@ -36,3 +36,20 @@ export function bangCommands(text) {
   }
   return out;
 }
+
+/**
+ * The single `!` command a fenced code block runs, or null.
+ *
+ * A code block earns an inline "run" button only when it is EXACTLY one `! cmd`
+ * line: shell mode reads one line, so a multi-line block is not one runnable
+ * command, and a block of prose is not a command at all. Mirrors the line rule
+ * of bangCommands (the `! ` marker, trailing backticks trimmed) so the two can
+ * never disagree about what is runnable — the inline button and the fallback
+ * row offer the same command, spelled the same way.
+ */
+export function blockCommand(codeText) {
+  const t = String(codeText == null ? "" : codeText).replace(/\s+$/, "");
+  if (!t || /\n/.test(t)) return null;
+  const m = /^\s*!\s+(\S.*)$/.exec(t);
+  return m ? m[1].replace(/`+$/, "").trim() : null;
+}
