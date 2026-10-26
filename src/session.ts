@@ -195,6 +195,7 @@ export class PtyPilot {
         screen: () => this.screen(),
         paste: (t) => this.write(`\x1b[200~${t}\x1b[201~`),
         clearInput: () => this.write("\x15"), // Ctrl-U
+        hardClear: () => this.press("ctrl-c"),
         waitFor: (p, o) => this.waitFor(p, o),
       },
       text,

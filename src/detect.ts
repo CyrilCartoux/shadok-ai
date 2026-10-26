@@ -174,6 +174,27 @@ const BOX_END = /^\s*(?:[─━]{10,}|⏵⏵|⏸|\?\s+for shortcuts)/;
  * it removes) shows as progress instead of as a box that will not clear.
  */
 export function boxText(screen: string): string {
+  return boxRaw(screen).trim();
+}
+
+/**
+ * The box as it is RENDERED, blank lines and all — what {@link boxText} reads
+ * before it trims.
+ *
+ * The trim is right for everything that asks "is there anything in there?", and
+ * wrong for the one caller that asks "did that keypress do anything?". Clearing
+ * a two-line prompt takes three Ctrl-U, and the middle one removes the now-empty
+ * second line: `"⟦header⟧\n"` becomes `"⟦header⟧"`, which trims to the same
+ * string. So one press out of three is INVISIBLE to a trimmed comparison —
+ * every time, on every multi-line prompt, not as a timing fluke.
+ *
+ * That is half of what put six copies of a message header in a live box:
+ * `emptyBox` gives up after two presses that changed nothing, and this
+ * guaranteed blind step hands it the first of the two for free. Measured on a
+ * real pane (2.1.310), capturing between presses: `header`+`Test` → `header`+
+ * blank → `header` → empty.
+ */
+export function boxRaw(screen: string): string {
   const lines = screen.split("\n");
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -183,7 +204,8 @@ export function boxText(screen: string): string {
   const out = [lines[start].replace(/^\s*[❯!]\s*/, "")];
   // Everything up to the box's bottom border belongs to the box.
   for (let i = start + 1; i < lines.length && !BOX_END.test(lines[i]); i++) out.push(lines[i]);
-  return out.join("\n").trim();
+  // Per-line, never globally: the trailing blank line IS the thing to keep.
+  return out.map((l) => l.trimEnd()).join("\n").replace(/^\s+/, "");
 }
 
 /**
@@ -362,6 +384,9 @@ export interface TypingPilot {
   paste(text: string): void;
   /** Ctrl-U: clear whatever is in the input box. */
   clearInput(): void;
+  /** Ctrl-C: empty the box in ONE press. The last resort, never the first —
+   *  see `hardClearIfLeftover` for why it is not simply used instead. */
+  hardClear(): void;
   waitFor(predicate: (screen: string) => boolean, opts?: { timeoutMs?: number }): Promise<string>;
 }
 
@@ -433,6 +458,87 @@ const MAX_CLEARS = 40;
 /** How long one press is given to show. Above the tmux mirror's fast poll
  *  (`SCREEN_FAST_MS`), or a press that worked would read as one that did not. */
 const CLEAR_STEP_MS = 400;
+/** How often the box is re-read while waiting for a press to show. */
+const CLEAR_POLL_MS = 60;
+
+/**
+ * Wait for the box to stop showing `from`, reading the screen DIRECTLY.
+ *
+ * Not `pilot.waitFor`, and that is the point. On the tmux transport the two
+ * read different things: `screen()` is a fresh `capture-pane`, while `waitFor`
+ * polls the POLLER'S MIRROR, refreshed every `SCREEN_FAST_MS` (300 ms) at best.
+ * Against the 400 ms this gets, a mirror that has just been read leaves ~100 ms
+ * of margin — and the capture is synchronous, so on a host with twenty agents
+ * the event loop eats that margin routinely. The press then worked and read as
+ * if it had not, which is the second of the two strikes `emptyBox` needs to
+ * give up on a box that is still full.
+ *
+ * `typeIntoBox` already takes its baseline from `screen()` for exactly this
+ * reason; this makes the recovery read the same thing the baseline does.
+ */
+async function waitForBoxChange(pilot: TypingPilot, from: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    // Read BEFORE sleeping: on tmux `screen()` is a capture of its own, so a
+    // press is often already visible, and the first poll should not cost the
+    // interval. It also means every call makes at least one real read, however
+    // small the window.
+    if (boxRaw(pilot.screen()) !== from) return true;
+    const left = deadline - Date.now();
+    if (left <= 0) return false;
+    await delay(Math.min(CLEAR_POLL_MS, left));
+  }
+}
+
+/**
+ * Is what is left in the box OURS, rather than the TUI's own furniture?
+ *
+ * The question exists because "the box is empty" cannot be read off the screen:
+ * at rest Claude Code fills it with an example (`❯ Try "edit <filepath> to…"`)
+ * and, later in a session, with the previous message as a greyed suggestion.
+ * Both render exactly like typed text. So a Ctrl-C fired on "non-empty" would
+ * mostly be fired at a box that holds nothing — and a Ctrl-C the TUI does not
+ * need is the one keystroke with a real cost, since the second in a row quits
+ * Claude Code.
+ *
+ * Two shapes are ours and cannot be furniture: a box spanning more than one
+ * line (an example is a single line), and one holding the head of the very text
+ * we are trying to paste — which is what a leftover from a discarded attempt
+ * is, and the reason those attempts stack instead of recovering.
+ */
+export function shouldHardClear(box: string, text: string): boolean {
+  if (box.trim() === "") return false;
+  if (box.includes("\n")) return true;
+  const head = text.split("\n")[0].trim().slice(0, 40);
+  return head.length > 0 && box.includes(head);
+}
+
+/**
+ * The way out of a box that Ctrl-U could not empty: ONE Ctrl-C.
+ *
+ * Measured on a live pane (2.1.310): a two-line prompt takes three Ctrl-U and
+ * goes in a single Ctrl-C. It is not used as the normal path because it is also
+ * what interrupts a running turn — so it is gated on the screen showing no work
+ * — and because a second Ctrl-C in a row exits Claude Code, which is why this
+ * fires at most once and never loops.
+ *
+ * Without it a single missed observation is permanent. The leftover header is a
+ * PREFIX of the text the next attempt pastes, so `survives` answers true for
+ * every remaining attempt, each one is discarded, and each discards leaves one
+ * more header behind: the box ends up holding exactly `attempts` copies of the
+ * message header and none of the message. That is the state found on a live
+ * instance, and it needed a human with a terminal to get out of.
+ */
+async function hardClearIfLeftover(pilot: TypingPilot, text: string, clearMs: number): Promise<void> {
+  const screen = pilot.screen();
+  // A turn is running: Ctrl-C would stop it, and a box full under a running
+  // turn is not the state this rescues.
+  if (screenShowsWork(screen)) return;
+  const box = boxRaw(screen);
+  if (!shouldHardClear(box, text)) return;
+  pilot.hardClear();
+  await waitForBoxChange(pilot, box, clearMs);
+}
 
 /**
  * Empty the input box, one Ctrl-U at a time.
@@ -440,29 +546,28 @@ const CLEAR_STEP_MS = 400;
  * Ctrl-U clears ONE LINE, not the box (seen on 2.1.296): a two-line paste takes
  * three presses — the last line, the newline, the first line. Progress cannot be
  * read off `inputText`, which sees the first line only and therefore stays put
- * while everything under it goes; `boxText` is what makes each press visible.
+ * while everything under it goes; `boxRaw` is what makes each press visible —
+ * `boxText` is not, because its trim hides the middle press (see `boxRaw`).
  * A run of presses that leaves the SCREEN untouched is a box with nothing left
- * to clear (or one that refuses to), and is given up on rather than hammered.
+ * to clear (or one that refuses to), and is given up on rather than hammered —
+ * and a box that refuses gets one Ctrl-C before the attempt is abandoned.
  */
-async function emptyBox(pilot: TypingPilot, clearMs: number): Promise<void> {
+async function emptyBox(pilot: TypingPilot, clearMs: number, text: string): Promise<void> {
   let stuck = 0;
   for (let press = 0; press < MAX_CLEARS && stuck < 2; press++) {
-    const shown = boxText(pilot.screen());
-    if (shown === "") return;
+    const shown = boxRaw(pilot.screen());
+    if (shown.trim() === "") return;
     pilot.clearInput();
-    try {
-      await pilot.waitFor((s) => boxText(s) !== shown, { timeoutMs: Math.min(clearMs, CLEAR_STEP_MS) });
-      stuck = 0;
-    } catch {
-      // Two presses that moved nothing: there is nothing left to clear. That is
-      // also the resting state of a FRESH session, whose box shows an example
-      // (`❯ Try "create a util logging.py that…"`) that Ctrl-U leaves exactly
-      // as it is — verified on 2.1.301, where it neither clears nor rotates. So
-      // the first prompt of a session pays two harmless presses, and every
-      // later one pays nothing: an empty box is returned on the first read.
-      stuck++;
-    }
+    // Two presses that moved nothing: there is nothing left to clear. That is
+    // also the resting state of a FRESH session, whose box shows an example
+    // (`❯ Try "create a util logging.py that…"`) that Ctrl-U leaves exactly
+    // as it is — verified on 2.1.301, where it neither clears nor rotates. So
+    // the first prompt of a session pays two harmless presses, and every
+    // later one pays nothing: an empty box is returned on the first read.
+    if (await waitForBoxChange(pilot, shown, Math.min(clearMs, CLEAR_STEP_MS))) stuck = 0;
+    else stuck++;
   }
+  await hardClearIfLeftover(pilot, text, clearMs);
 }
 
 /**
@@ -532,7 +637,7 @@ export async function typeIntoBox(
       }, { timeoutMs: appearMs });
     } catch {
       await delay(settleMs); // let a paste that is still in flight land
-      await emptyBox(pilot, clearMs);
+      await emptyBox(pilot, clearMs, text);
       continue;
     }
     // It is in the box. On its own, or on top of what was already there?
@@ -548,7 +653,7 @@ export async function typeIntoBox(
     if (!survives(before, boxText(pilot.screen()))) return true;
     // It joined the leftovers. Throw the attempt away — no settle delay, the
     // paste has demonstrably landed — and start again on an empty box.
-    await emptyBox(pilot, clearMs);
+    await emptyBox(pilot, clearMs, text);
   }
   return false;
 }
