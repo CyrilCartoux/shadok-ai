@@ -529,7 +529,11 @@ On a normal (non-Docker) host this is a **no-op** — shadok never touches your
 ### Configuration
 
 Config lives in `~/.shadok-ai/config.json` (mode 600) and is **authoritative
-over the environment once set** from the GUI. The Telegram token, allowed
+over the environment once set** from the GUI — with two exceptions where the
+environment wins: `SHADOK_GUI_PASSWORD` (a saved `--password` is used only when
+that variable is unset, and nothing in the cockpit can change it — on Docker,
+the password is the one the container was created with) and
+`TELEGRAM_BOT_TOKEN`. The Telegram token, allowed
 chats, and the bridge on/off switch are **per launch directory** — running the
 server from another repo gives you a different cockpit and a different bot. So
 are the channel list and the scheduled prompts.
@@ -542,7 +546,7 @@ machine, which silently shifts every daily prompt on a server running in UTC.
 |---|---|
 | `PORT` | HTTP/WS port |
 | `SHADOK_HOST` | interface to bind (default `127.0.0.1`, this machine only) |
-| `SHADOK_GUI_PASSWORD` | require a password for the GUI |
+| `SHADOK_GUI_PASSWORD` | require a password for the GUI — overrides a password saved by `--password` |
 | `SHADOK_ORIGINS` | extra browser origins allowed, comma-separated (reverse proxy) |
 | `SHADOK_TMUX=0` | force the node-pty transport instead of tmux |
 | `SHADOK_IDLE_MIN` | minutes with no client before a session is reclaimed (60) |

@@ -747,7 +747,11 @@ status, not a gate. Nothing to click, nothing to dismiss.
 ## Auth (optional password gate)
 
 Set a password (`--password`, `SHADOK_GUI_PASSWORD`, or config) and every page,
-endpoint and WebSocket requires it — except `/login`. The session cookie is
+endpoint and WebSocket requires it — except `/login`. Precedence runs against the usual config-over-env rule: the server only ever
+reads `SHADOK_GUI_PASSWORD`, and the supervisor (`main.ts`) fills it from the
+config only when it is unset, so the env var wins. Nothing in the cockpit
+writes the password; on a container it changes only when the container is
+recreated with a different `-e`, and it changes silently. The session cookie is
 derived **deterministically from the password by HMAC**, not random: a server
 restart therefore doesn't log everyone out, and any instance sharing the
 password accepts the same cookie. It's one-way, so the cookie never leaks the
