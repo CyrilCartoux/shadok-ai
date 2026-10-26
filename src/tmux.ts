@@ -502,6 +502,7 @@ export class TmuxPilot {
         screen: () => this.freshScreen(),
         paste: (t) => this.paste(t),
         clearInput: () => this.write("\x15"), // Ctrl-U
+        hardClear: () => this.press("ctrl-c"),
         waitFor: (p, o) => this.waitFor(p, o),
       },
       text,
