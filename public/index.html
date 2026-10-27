@@ -283,6 +283,20 @@
     font-family: var(--mono); font-size: 12px; text-align: center;
     padding: 6px 12px;
   }
+  /* The re-login reminder (sign-in within 24h / expired). Same top strip as the
+     update banner; its own id so the two never share styling by accident. */
+  #expiryBanner {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    background: var(--amber); color: #1a1200;
+    font-family: var(--mono); font-size: 12px;
+    padding: 6px 12px;
+    display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap;
+  }
+  #expiryBanner button {
+    font: inherit; cursor: pointer; padding: 2px 10px;
+    border: 1px solid currentColor; border-radius: 4px;
+    background: transparent; color: inherit;
+  }
   .gauge { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .gauge .value {
     font-family: var(--mono);
@@ -1966,6 +1980,9 @@
        Filled from /auth when the menu opens (instance-global, not per tab). -->
   <div class="vm-row"><span class="vm-label">Account</span><span id="vmAccount">—</span></div>
   <div class="vm-row"><span class="vm-label">Token</span><span id="vmToken">—</span></div>
+  <!-- Re-login to Claude without waiting for the token to lapse. Shown only
+       when signed in (when signed out the sign-in card opens on its own). -->
+  <button class="vm-btn" id="reloginBtn" type="button" hidden>↻ Re-login to Claude</button>
   <label class="vm-check"><input type="checkbox" id="autoUpdateChk"><span>Auto-update</span></label>
   <div class="vm-hint" id="vmHint"></div>
   <div class="vm-row"><span class="vm-label">Channel</span>
@@ -2540,6 +2557,9 @@
   window.claudeUpdateState = claudeUpdateState;
   import { uploadFailure } from "/upload.js?v=__ASSET_V__";
   window.uploadFailure = uploadFailure;
+  import { fmtExpiry, expiryWarning } from "/auth-expiry.js?v=__ASSET_V__";
+  window.fmtExpiry = fmtExpiry;
+  window.expiryWarning = expiryWarning;
   import { filterLedger, ledgerFacets, ledgerAge, LEDGER_AGES, LEDGER_SORTS } from "/ledger-view.js?v=__ASSET_V__";
   window.filterLedger = filterLedger;
   window.ledgerFacets = ledgerFacets;
@@ -2656,6 +2676,10 @@
     // cache. instanceKey is stamped synchronously, so the stub can namespace.
     dirKey: (base) => (instanceKey ? base + ":" + instanceKey : base),
     serverSwapped: (pageKey, serverKey) => !!pageKey && !!serverKey && pageKey !== serverKey,
+    // No module yet → the version-menu row shows a placeholder (it repaints
+    // after the /auth fetch), and the re-login reminder never nags blind.
+    fmtExpiry: () => "—",
+    expiryWarning: () => null,
     uploadFailure: (status, contentType) =>
       /json/i.test(contentType || "") ? null : status === 413 ? "too large (over the server's upload limit)" : `upload failed (HTTP ${status || "?"})`,
   };
@@ -2684,6 +2708,9 @@
       if (typeof renderProfileGrid === "function" && $("profileGrid")) renderProfileGrid(false);
       if (typeof renderProfilesList === "function" && !$("profilesOverlay").hidden) renderProfilesList();
       if (typeof renderSecrets === "function" && !$("secretsOverlay").hidden) renderSecrets();
+      // The re-login banner's first pass may have run on the neutral stub
+      // (expiryWarning → null); re-evaluate now the real clock has landed.
+      if (typeof updateExpiryBanner === "function") updateExpiryBanner();
     } catch {
       /* une repeinte ratée ne doit pas casser le chargement */
     }
@@ -6042,21 +6069,18 @@
   // /auth (instance-global) each time the menu opens, so it never goes stale in
   // a tab left open for days.
   let lastAuth = null;
-  /** A future instant as "in 22 days" / "in 6 h" / "in 40 min" / "expired". */
-  function fmtExpiry(ts) {
-    const s = (ts - Date.now()) / 1000;
-    if (s <= 0) return "expired";
-    const h = s / 3600;
-    if (h >= 48) return "in " + Math.round(h / 24) + " days";
-    if (h >= 1.5) return "in " + Math.round(h) + " h";
-    return "in " + Math.max(1, Math.round(s / 60)) + " min";
-  }
+  // fmtExpiry / expiryWarning are pure and live in public/auth-expiry.js
+  // (bridged onto window, invariant 10) so the tests can exercise the clock.
   function renderAuthRows() {
     const accEl = document.getElementById("vmAccount");
     const tokEl = document.getElementById("vmToken");
+    const relBtn = document.getElementById("reloginBtn");
     if (!accEl || !tokEl) return;
     const a = lastAuth;
     tokEl.style.color = "";
+    // Only offer a re-login when we KNOW the account is signed in — a failed
+    // probe ("unknown") or a signed-out state is the sign-in card's job.
+    if (relBtn) relBtn.hidden = true;
     if (!a || a.state === "unknown") {
       accEl.textContent = "—"; accEl.title = "";
       tokEl.textContent = "—"; tokEl.title = "";
@@ -6067,11 +6091,12 @@
       tokEl.textContent = "—"; tokEl.title = "";
       return;
     }
+    if (relBtn) relBtn.hidden = false;
     accEl.textContent = (a.email || "signed in") + (a.subscriptionType ? " · " + a.subscriptionType : "");
     accEl.title = a.authMethod ? "via " + a.authMethod : "";
     if (typeof a.tokenExpiresAt === "number") {
       const ms = a.tokenExpiresAt - Date.now();
-      tokEl.textContent = fmtExpiry(a.tokenExpiresAt);
+      tokEl.textContent = window.fmtExpiry(a.tokenExpiresAt);
       tokEl.style.color = ms <= 0 ? "var(--err)" : ms < 3 * 86400000 ? "var(--amber)" : "";
       tokEl.title = "Claude sign-in expires " + new Date(a.tokenExpiresAt).toLocaleString() +
         " — a re-login is needed after this. The short-lived access token refreshes on its own.";
@@ -6084,6 +6109,33 @@
     try { lastAuth = await (await fetch("/auth")).json(); }
     catch { lastAuth = null; }
     if (!verMenu.hidden) renderAuthRows();
+    updateExpiryBanner();   // the banner must track the clock even menu-closed
+  }
+
+  // ── Re-login reminder banner (sign-in within 24h / expired) ───────────────
+  // A top strip that nags to re-login before the token lapses and the agents
+  // start getting 401s. The decision (and its 24h threshold) is pure —
+  // window.expiryWarning, public/auth-expiry.js — so only the DOM lives here.
+  function updateExpiryBanner() {
+    const w = window.expiryWarning(lastAuth);
+    let el = document.getElementById("expiryBanner");
+    if (!w) { if (el) el.remove(); return; }   // re-logged in → clock reset → gone
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "expiryBanner";
+      const span = document.createElement("span");
+      span.id = "expiryBannerText";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Re-login now";
+      btn.addEventListener("click", () => openAuthCard(true));
+      el.append(span, btn);
+      document.body.appendChild(el);
+    }
+    // Expired is an escalation, not just a reminder — turn the strip red.
+    el.style.background = w.expired ? "var(--err)" : "";
+    el.style.color = w.expired ? "#fff" : "";
+    document.getElementById("expiryBannerText").textContent = w.text;
   }
 
   function toggleVerMenu(show) {
@@ -6252,6 +6304,13 @@
     }
   });
   document.getElementById("reloadUpdatesBtn").addEventListener("click", reloadPendingUpdates);
+  // Re-login to Claude on demand, from the version menu. Reuses the exact
+  // sign-in card the signed-out path opens; closing the menu first keeps the
+  // OAuth URL from being hidden behind it.
+  document.getElementById("reloginBtn").addEventListener("click", () => {
+    toggleVerMenu(false);
+    openAuthCard(true);
+  });
 
   function showUpdateBanner(version) {
     let el = document.getElementById("updateBanner");
@@ -8864,7 +8923,11 @@
     }
   }
 
-  async function openAuthCard() {
+  // `force` is a deliberate re-login from a SIGNED-IN instance (the version-menu
+  // button and the expiry banner). Without it the server short-circuits to
+  // {alreadySignedIn} and the card closes doing nothing — which is exactly the
+  // no-op the signed-in re-login affordances would otherwise be.
+  async function openAuthCard(force = false) {
     if (!$("authOverlay").hidden) return;   // a flow is already on screen
     $("authOverlay").hidden = false;
     $("authMsg").hidden = true;
@@ -8872,7 +8935,11 @@
     link.textContent = "starting…";
     link.removeAttribute("href");
     try {
-      const r = await (await fetch("/auth/login", { method: "POST" })).json();
+      const r = await (await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      })).json();
       // The server has the last word: it re-checks, and if the instance turns
       // out to be signed in it spawns nothing and says so.
       if (r && r.alreadySignedIn) { $("authOverlay").hidden = true; return; }
@@ -8906,6 +8973,9 @@
       // signed-in instance shows blank dials until the next 60s poll, which
       // reads as "usage is broken" right after onboarding.
       refreshUsage();
+      // The deadline just jumped ~22 days out: repaint so the reminder banner
+      // (and the version-menu Token row) clear at once instead of next poll.
+      refreshAuthRows();
       // Name the account: a machine can serve several people, and "signed in"
       // without saying as whom is the kind of detail that costs an hour later.
       let who = "";
@@ -9099,6 +9169,7 @@
   document.addEventListener("DOMContentLoaded", () => {
     buildDialArcs();
     refreshUsage();
+    refreshAuthRows();  // paints the re-login reminder banner if the token is due
     maybeStartTour();   // the tour runs first; it calls checkAuth() when it ends
     // The count is a nicety: if it can't be had, the button keeps its label and
     // no number is invented.
@@ -9112,6 +9183,9 @@
       .catch(() => {});
   });
   setInterval(refreshUsage, 60_000);
+  // The sign-in deadline is days out, so a coarse poll catches the 24h crossing
+  // in good time without hammering /auth (which also re-checks the account).
+  setInterval(refreshAuthRows, 10 * 60_000);
 
   // On load: restore the remembered groups (server-side, keyed by launch
   // directory), then the remembered channels by resuming each session (the
