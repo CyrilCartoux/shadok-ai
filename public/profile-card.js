@@ -34,7 +34,7 @@ export function profileBlurb(profile) {
 /**
  * The access badge: what this profile may change, read off what its deny
  * blocks. A file deny is read for its SCOPE as well as its presence — a
- * blanket `Write` stops everything, `Write(src/**)` stops the source and
+ * blanket `Write` stops everything, `Edit(src/**)` stops the source and
  * leaves the deliverable (a test, a spec, a draft) writable.
  */
 function access(deny, gitBlocked, files) {
