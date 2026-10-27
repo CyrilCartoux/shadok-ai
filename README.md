@@ -114,12 +114,16 @@ Enter to skip; you can add it later from the web UI).
   trigger to you, a product agent that writes the spec instead of the change,
   and three go-to-market roles (paid, organic, support). Each one is yours to
   edit, and a role you delete stays deleted.
-- **Which account, and when it expires** — the version menu also shows the
-  Claude login this cockpit runs on (its email and subscription) and when its
-  sign-in **expires** — i.e. when a re-login will be needed. The timestamp is
-  read from Claude Code's own credentials store, never the token itself; the
-  short-lived access token refreshes on its own, so the figure shown is the
-  session deadline, not that rotation.
+- **Which account, and when it expires — and re-login before it does** — the
+  version menu shows the Claude login this cockpit runs on (its email and
+  subscription) and when its sign-in **expires** — i.e. when a re-login will be
+  needed. The timestamp is read from Claude Code's own credentials store, never
+  the token itself; the short-lived access token refreshes on its own, so the
+  figure shown is the session deadline, not that rotation. A **↻ Re-login to
+  Claude** button right there signs you in again without waiting for the lapse,
+  and in the last **24 hours** (or once it has lapsed) a reminder **banner**
+  carries the same one-click re-login — so your agents never quietly start
+  hitting `401` because nobody renewed the session.
 - **Secret vault** — stored under `~/.shadok-ai`, never in your repo, injected
   as env vars into the agents that need them. Add or **update** a secret from the
   panel, tick the **profiles** it should feed right there, and reload the running
