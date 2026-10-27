@@ -67,19 +67,24 @@ export const READONLY_DENY = [
  * The rule that actually governs is the one in the role's prompt. Each name is
  * anchored twice because a monorepo keeps its source at `packages/<x>/src` as
  * readily as at `src`.
+ *
+ * `Edit(...)` only, and not for style: a path-scoped `Write(<glob>)` deny
+ * never matches anything. Claude Code keys its file-write permission check on
+ * the `Edit` matcher, which covers the Write tool too. Measured on 2.1.311
+ * (which now prints "Deny rule Write(src/**) never matches · use Edit(src/**)"
+ * at startup, one row per such entry): with only `Write(src/**)` denied, a
+ * Write to `src/newfile.ts` succeeded; with only `Edit(src/**)` denied, both
+ * Write and Edit were refused, relative and absolute paths alike. Do not
+ * "restore symmetry" by adding `Write(...)` back — it only brings the warning
+ * rows back. (The bare `Write` / `Edit` that `Shadok-Release` carries are a
+ * different rule shape and are fine.)
  */
 export const SOURCE_WRITE_DENY = [
-  "Write(src/**)",
   "Edit(src/**)",
-  "Write(**/src/**)",
   "Edit(**/src/**)",
-  "Write(lib/**)",
   "Edit(lib/**)",
-  "Write(**/lib/**)",
   "Edit(**/lib/**)",
-  "Write(app/**)",
   "Edit(app/**)",
-  "Write(**/app/**)",
   "Edit(**/app/**)",
 ];
 

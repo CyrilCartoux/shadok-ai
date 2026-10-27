@@ -495,7 +495,9 @@ prefixed for a monorepo, and stops there. It cannot be complete — every extra
 entry is a directory some other ecosystem uses for something else — and it does
 not need to be: the layer is soft (a shell redirection writes anywhere), the
 rule that governs is in the role's prompt, and a false block costs more than a
-missed one.
+missed one. The entries are `Edit(...)` only: a path-scoped `Write(<glob>)`
+deny never matches, because the `Edit` matcher is what covers the Write tool
+(measured on Claude Code 2.1.311, which prints a startup warning per inert rule).
 
 The card's access badge reads **what** is denied rather than merely that
 something is (`profileBadges`, `public/profile-card.js`). Any `deny` used to
