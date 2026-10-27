@@ -44,7 +44,8 @@ test("countdown fixture: the two screens differ, the dialog does not", () => {
   const a = countdownScreen("1:43");
   const b = countdownScreen("1:42");
   assert.notEqual(a, b, "a byte comparison sees two different screens");
-  assert.deepEqual(detectDialog(a), {
+  const { body, ...dialog } = detectDialog(a)!;
+  assert.deepEqual(dialog, {
     question: "Do you want to proceed?",
     options: [
       { n: 1, label: "Yes", hint: "" },
@@ -52,6 +53,9 @@ test("countdown fixture: the two screens differ, the dialog does not", () => {
     ],
     multi: false,
   }, "the countdown line stays out of the question");
+  // The countdown IS the box's body — the card shows it — and that is exactly
+  // why the body must stay out of the key: it ticks, the question does not.
+  assert.match(body ?? "", /automatically deny this request in 1:43/);
   assert.equal(keyOf(a), keyOf(b), "the clock is in neither the question nor the labels");
 });
 

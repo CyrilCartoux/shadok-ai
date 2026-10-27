@@ -82,7 +82,9 @@ Enter to skip; you can add it later from the web UI).
   stays (and `Recover` reopens it).
 - **Interactive dialogs** — the TUI's permission prompts and multiple-choice
   questions become clickable buttons in the chat, and an inline keyboard in
-  Telegram.
+  Telegram. The card carries the prompt's own text too — what it will run or
+  read, and Claude Code's warnings such as a read leaving the working directory
+  through a symlink — so you approve what the terminal would have shown you.
 - **Thinking effort** — how hard an agent thinks before answering (`--effort`),
   set on a role in the Profiles panel and overridable per agent from its menu.
   Higher levels cost more tokens, and thinking tokens are billed even when they
@@ -112,6 +114,12 @@ Enter to skip; you can add it later from the web UI).
   trigger to you, a product agent that writes the spec instead of the change,
   and three go-to-market roles (paid, organic, support). Each one is yours to
   edit, and a role you delete stays deleted.
+- **Which account, and when it expires** — the version menu also shows the
+  Claude login this cockpit runs on (its email and subscription) and when its
+  sign-in **expires** — i.e. when a re-login will be needed. The timestamp is
+  read from Claude Code's own credentials store, never the token itself; the
+  short-lived access token refreshes on its own, so the figure shown is the
+  session deadline, not that rotation.
 - **Secret vault** — stored under `~/.shadok-ai`, never in your repo, injected
   as env vars into the agents that need them. Add or **update** a secret from the
   panel, tick the **profiles** it should feed right there, and reload the running
@@ -165,11 +173,14 @@ Enter to skip; you can add it later from the web UI).
   a bot may download at 20 MB; past that you get a clear notice instead of
   silence.
 - **Run the command an agent asks you to** — when an agent writes `! cmd` for
-  you to run (typically because it cannot), a ▶ button under its message runs it
-  in the agent's shell after a confirmation showing the exact command. It is
-  refused for anything but your browser, since shell mode sits outside the
-  agent's guardrails. The command and its output stay in the chat, reload
-  included — as does one you typed yourself in the terminal view.
+  you to run (typically because it cannot), a ▶ run button sits right on that
+  command's code block, beside its copy button — so it runs where it was
+  written, not in a list below. (An inline `` `! cmd` `` with no block of its
+  own still gets a button under the message.) It runs in the agent's shell after
+  a confirmation showing the exact command, and is refused for anything but your
+  browser, since shell mode sits outside the agent's guardrails. The command and
+  its output stay in the chat, reload included — as does one you typed yourself
+  in the terminal view.
 - **Files you hand an agent** — paste or drop a file into the composer (an
   image, a PDF, a CSV…) and it becomes a **chip** above the text box: a
   thumbnail for an image, a named tag for anything else, each with a ✕ to
@@ -324,6 +335,20 @@ are what survive `docker restart` **and** `docker rm`+recreate: `~/.shadok-ai`
 (vault, profiles, channels, crons, SSH identity), `~/.claude` (credentials,
 transcripts), `/workspace` (agents' files). A fresh container needs a one-time
 Claude login: `docker exec -it shadok-ai claude`.
+
+**pid 1 reaps.** The image enters through `tini`, and that is load-bearing in the
+long run: agents orphan processes all day (a backgrounded `sleep` loop, an
+abandoned `esbuild`, a killed `gh`), an orphan is re-parented to pid 1, and only
+pid 1 can reap it — which the cockpit's own supervisor never does, since Node
+only waits for the children it spawned itself. A zombie costs no memory and no
+CPU, just a pid slot, so nothing shows until the container's pid budget runs out
+and it can no longer fork anything at all: no new agent, no `git`, no shell.
+Measured on an instance running since August: 79,055 zombies against a 113,098
+pid budget. Two things follow for an existing deployment. If you run an image
+from before this (or any image whose pid 1 is the app), add `--init` and Docker
+supplies the reaper. And either way it is decided when the container is
+**created**: `docker restart` empties the table — pid 1 restarts, the kernel
+drops the lot — but the leak starts over, so a recreate is what makes it stop.
 
 ### Exposing it beyond this machine
 
@@ -545,7 +570,11 @@ On a normal (non-Docker) host this is a **no-op** — shadok never touches your
 ### Configuration
 
 Config lives in `~/.shadok-ai/config.json` (mode 600) and is **authoritative
-over the environment once set** from the GUI. The Telegram token, allowed
+over the environment once set** from the GUI — with two exceptions where the
+environment wins: `SHADOK_GUI_PASSWORD` (a saved `--password` is used only when
+that variable is unset, and nothing in the cockpit can change it — on Docker,
+the password is the one the container was created with) and
+`TELEGRAM_BOT_TOKEN`. The Telegram token, allowed
 chats, and the bridge on/off switch are **per launch directory** — running the
 server from another repo gives you a different cockpit and a different bot. So
 are the channel list and the scheduled prompts.
@@ -558,7 +587,7 @@ machine, which silently shifts every daily prompt on a server running in UTC.
 |---|---|
 | `PORT` | HTTP/WS port |
 | `SHADOK_HOST` | interface to bind (default `127.0.0.1`, this machine only) |
-| `SHADOK_GUI_PASSWORD` | require a password for the GUI |
+| `SHADOK_GUI_PASSWORD` | require a password for the GUI — overrides a password saved by `--password` |
 | `SHADOK_ORIGINS` | extra browser origins allowed, comma-separated (reverse proxy) |
 | `SHADOK_TMUX=0` | force the node-pty transport instead of tmux |
 | `SHADOK_IDLE_MIN` | minutes with no client before a session is reclaimed (60) |
@@ -768,8 +797,10 @@ right now), `/version`, `/autoupdate`,
 returns the cwd to start the tweak agent in), `/media/<name>` (GET — serves a
 pasted/dropped or Telegram attachment back for inline display; sandboxed, basename
 only), and the sign-in group: `/auth` (GET
-— `{loggedIn, email?, subscriptionType?}`), `/auth/login` (POST — start a flow,
-returns `{url}`; DELETE — cancel it), `/auth/code` (POST `{code}`).
+— `{loggedIn, email?, subscriptionType?, tokenExpiresAt?, accessExpiresAt?}`;
+the expiries come from the credentials store, never a token value), `/auth/login`
+(POST — start a flow, returns `{url}`; DELETE — cancel it), `/auth/code`
+(POST `{code}`).
 
 ## Library
 

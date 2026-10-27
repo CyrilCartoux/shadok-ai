@@ -291,8 +291,23 @@ channel reachable from the mobile channel selector like any other.
 ## Interactive dialogs
 
 `detectDialog(screen)` finds numbered options with a `❯` selector, strips any
-right-hand preview column, and returns `{question, options[], multi}`. The UI
-renders clickable buttons; Telegram renders an inline keyboard.
+right-hand preview column, and returns `{question, options[], multi, body?}`.
+The UI renders clickable buttons; Telegram renders an inline keyboard.
+
+`body` is the dialog box's own text above the question — a permission prompt's
+title, what it will do and to what (`Read file` / `This will read … (outside
+working directory) via a symlink` / `Read(…)`). The box is bounded by the
+full-width `────` rule above it; inside, `╌╌╌` rules, the tab bar and an
+AskUserQuestion header chip are furniture, and a `│` gutter is stripped. Lines
+the TUI wrapped are rejoined from the geometry (a token too long for any row
+was cut mid-token → glued; a next word that would not have fit → a space;
+otherwise the TUI's own break is kept), because a path with a space in it is
+exactly what a person must not be shown when judging a read. Both clients put
+it above the question; Telegram cuts the body's tail, never the question, to
+stay under the message limit (`dialogText`). It is NOT part of `dialogKey`:
+it is description, not identity, so a repaint cannot re-announce a question —
+and `settleStep` can still settle on a dialog whose body carries a ticking
+auto-deny countdown.
 
 The question is read by walking up from the first option and stopping at the
 first line of décor (`FRAME_LINE`: a line that *starts* with a frame, rule or
@@ -395,6 +410,26 @@ Without this gate a public bot username is an open shell.
   are chunked under the 4096-char limit. A "typing…" heartbeat runs for the
   whole turn and is stopped by *every* terminal outcome (`turn-done`, `dialog`,
   `pace-blocked`, `exited`, WS close) — a missed one leaves it spinning forever.
+- **Writes are serial, bounded, and never silent.** Each bridge owns a FIFO
+  queue (`makeSendQueue`), so a preface cannot overtake its own keyboard. The
+  price of that order is that one stuck call stops the channel, so every Bot
+  API call carries a deadline and every refusal is said out loud: a `429` is
+  held for the `retry_after` it names and then retried, anything else is logged
+  with the topic it was meant for. The failure this replaces had no symptom at
+  all — the bridge kept receiving, the agent kept answering, the transcript was
+  up to date, and nothing came out.
+- **Reads are bounded too, for a sharper reason.** The long-poll reschedules
+  itself from the END of each call, so a single request that never comes back
+  ends the loop outright: the bridge goes **deaf**, with no log line, no
+  watchdog behind it, and only a restart to bring it back. Its signal is the
+  loop's own abort OR a 45 s deadline (`pollSignal`) — the abort half is what
+  `stop()` pulls to free an in-flight request, without which a restart meets
+  Telegram's 409 (two `getUpdates` on one bot), and the deadline half is what
+  the mute-bridge fix had left out. A request abandoned that way says so and a
+  new one opens. The attachment download is bounded the same way (it costs one
+  message rather than the channel, since the loop never awaits `handleUpdate`)
+  and so is the `getMe` the GUI waits on. `test/telegram.test.ts` scans this
+  file for the rule types cannot carry: no `fetch` to Telegram without a signal.
 - **Commands**: `/setup`, `/spawn [profile] <name>`, `/profiles`, `/stop`
   (alias `/esc` — interrupts the turn), `/new`, `/end`, `/restart`, `/list`,
   `/cron` (`every 30m …`, `daily HH:MM …`, `list`, `on`, `off`, `del`),
@@ -460,7 +495,9 @@ prefixed for a monorepo, and stops there. It cannot be complete — every extra
 entry is a directory some other ecosystem uses for something else — and it does
 not need to be: the layer is soft (a shell redirection writes anywhere), the
 rule that governs is in the role's prompt, and a false block costs more than a
-missed one.
+missed one. The entries are `Edit(...)` only: a path-scoped `Write(<glob>)`
+deny never matches, because the `Edit` matcher is what covers the Write tool
+(measured on Claude Code 2.1.311, which prints a startup warning per inert rule).
 
 The card's access badge reads **what** is denied rather than merely that
 something is (`profileBadges`, `public/profile-card.js`). Any `deny` used to
@@ -712,7 +749,11 @@ status, not a gate. Nothing to click, nothing to dismiss.
 ## Auth (optional password gate)
 
 Set a password (`--password`, `SHADOK_GUI_PASSWORD`, or config) and every page,
-endpoint and WebSocket requires it — except `/login`. The session cookie is
+endpoint and WebSocket requires it — except `/login`. Precedence runs against the usual config-over-env rule: the server only ever
+reads `SHADOK_GUI_PASSWORD`, and the supervisor (`main.ts`) fills it from the
+config only when it is unset, so the env var wins. Nothing in the cockpit
+writes the password; on a container it changes only when the container is
+recreated with a different `-e`, and it changes silently. The session cookie is
 derived **deterministically from the password by HMAC**, not random: a server
 restart therefore doesn't log everyone out, and any instance sharing the
 password accepts the same cookie. It's one-way, so the cookie never leaks the

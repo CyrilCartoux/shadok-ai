@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import {
+  promptFrame,
+  pollSignal,
+  floodWaitMs,
+  withFloodControl,
+  refusalReason,
+  FLOOD_BUDGET_MS,
   shouldReattachBridge,
   senderName,
   replyContext,
@@ -11,6 +18,7 @@ import {
   chunk,
   parseCommand,
   dialogKeyboard,
+  dialogText,
   parseCallback,
   makeTyping,
   mdToTelegramHtml,
@@ -937,4 +945,162 @@ test("the 20 MB ceiling is named as a ceiling, not as a failure", () => {
   assert.match(notice, /20 MB/);
   assert.match(notice, /34\.0 MB/);
   assert.match(notice, /video/);
+});
+
+
+test("flood control is a delay, not a failure", () => {
+  // The refusal that says the message is fine and the moment is wrong. A bot
+  // trips it on ITSELF — a burst of four videos is enough — so the busiest
+  // moment in a channel is exactly when its answers would start disappearing.
+  const wait = floodWaitMs({ ok: false, error_code: 429, parameters: { retry_after: 7 } });
+  assert.ok(wait !== null && wait >= 7000, String(wait));
+  // Strictly more than asked: retry_after is a floor, and coming back one
+  // millisecond early buys a second refusal.
+  assert.ok((wait as number) > 7000);
+});
+
+test("only flood control is waited out", () => {
+  assert.equal(floodWaitMs({ ok: true, result: { message_id: 1 } }), null);
+  // A 400 is a real refusal: the message as written will never be accepted.
+  assert.equal(floodWaitMs({ ok: false, error_code: 400, description: "can't parse entities" }), null);
+  // `null` is "the call itself failed" — no stated delay to wait for, so
+  // holding the serial queue on it would be waiting on nothing.
+  assert.equal(floodWaitMs(null), null);
+  assert.equal(floodWaitMs(undefined), null);
+  // A 429 with no retry_after still waits: "too fast" must never be read as
+  // "undeliverable" just because the delay was missing.
+  assert.ok((floodWaitMs({ ok: false, error_code: 429 }) ?? 0) > 0);
+});
+
+test("a rate-limited message is held and then sent, not dropped", async () => {
+  const slept: number[] = [];
+  let calls = 0;
+  const res = await withFloodControl(
+    async () => {
+      calls++;
+      return calls < 3
+        ? { ok: false, error_code: 429, parameters: { retry_after: 2 } }
+        : { ok: true, result: { message_id: 42 } };
+    },
+    { sleep: async (ms) => void slept.push(ms) },
+  );
+  assert.deepEqual(res, { ok: true, result: { message_id: 42 } });
+  assert.equal(calls, 3);
+  assert.equal(slept.length, 2);
+  assert.ok(slept.every((ms) => ms >= 2000));
+});
+
+test("the wait is bounded, and the last refusal comes back so it can be reported", async () => {
+  // An answer held for ten minutes is no longer an answer. What must NOT
+  // happen is swallowing the refusal on the way out: the caller has to be able
+  // to say the message was lost.
+  let calls = 0;
+  const forever = { ok: false, error_code: 429, parameters: { retry_after: 600 } };
+  const res = await withFloodControl(
+    async () => {
+      calls++;
+      return forever;
+    },
+    { sleep: async () => {}, budgetMs: FLOOD_BUDGET_MS },
+  );
+  assert.deepEqual(res, forever);
+  assert.equal(calls, 1, "a delay longer than the whole budget is not even waited once");
+});
+
+test("a refusal and an unreachable API do not read the same", () => {
+  // Two different facts: Telegram said no (and why), or we never heard back.
+  assert.match(refusalReason({ ok: false, error_code: 400, description: "TOPIC_CLOSED" }), /400 TOPIC_CLOSED/);
+  assert.match(refusalReason(null), /no answer/i);
+  assert.match(refusalReason({ ok: false }), /no reason given/i);
+});
+
+test("the long-poll's signal keeps the manual abort AND gains a deadline", async () => {
+  // Both halves matter. Without the abort, `stop()` cannot free an in-flight
+  // request and a restart meets Telegram's 409 (two getUpdates on one bot).
+  // Without the deadline, a request that never settles ends the poll loop for
+  // ever — the loop reschedules from the END of each call, so the bridge goes
+  // deaf with nothing logged and only a restart brings it back.
+  const manual = new AbortController();
+  const sig = pollSignal(manual.signal, 60_000);
+  assert.equal(sig.aborted, false);
+  manual.abort(new Error("stop() pulled it"));
+  assert.equal(sig.aborted, true, "the manual abort must still reach the request");
+
+  const fresh = new AbortController();
+  const quick = pollSignal(fresh.signal, 20);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(quick.aborted, true, "a request nobody answers must be abandoned");
+  assert.equal(fresh.signal.aborted, false, "the deadline fires on its own, not through the controller");
+});
+
+test("no call to Telegram may be unbounded", () => {
+  // The scan is the test, like the CSP nonce and the WS scheme: nothing in the
+  // type system says a `fetch` has a deadline, and every unbounded one found so
+  // far cost a bridge that went silent — mute (the serial send queue held
+  // behind one call) or deaf (the long-poll never coming back). Both failures
+  // left no log line at all, which is why they were measured in production
+  // rather than noticed in review.
+  const src = fs.readFileSync(new URL("../src/telegram.ts", import.meta.url), "utf8");
+  const spans: string[] = [];
+  for (let i = src.indexOf("fetch("); i >= 0; i = src.indexOf("fetch(", i + 1)) {
+    // The call's own argument list, by balanced parentheses.
+    let depth = 0;
+    const from = src.indexOf("(", i);
+    let j = from;
+    for (; j < src.length; j++) {
+      if (src[j] === "(") depth++;
+      else if (src[j] === ")" && --depth === 0) break;
+    }
+    spans.push(src.slice(from, j + 1));
+  }
+  assert.ok(spans.length >= 4, `expected to find the fetch calls, found ${spans.length}`);
+  // The long-poll is the ONE caller that brings its own signal, which is also
+  // how it opts out of `tg`'s default deadline — so the deadline has to be in
+  // the signal it brings, and a scan over `fetch` alone cannot see that.
+  assert.match(
+    src,
+    /pollSignal\(pollAbort\.signal, POLL_DEADLINE_MS\)/,
+    "the long-poll must carry its own deadline, not just its abort",
+  );
+  for (const span of spans) {
+    assert.match(
+      span.replace(/\s+/g, " "),
+      /signal/,
+      `a fetch to Telegram with no signal: ${span.replace(/\s+/g, " ").slice(0, 90)}`,
+    );
+  }
+});
+
+test("a prompt queued before the socket is ready arrives exactly like a live one", () => {
+  // `pending` used to hold the bare text, so the FIRST message of any new DM or
+  // topic — the one that cannot find a ready socket, by construction — reached
+  // the server with no author and no voice flag. The server builds the
+  // ⟦telegram · date · who⟧ header the AGENT reads out of those two fields, so
+  // "hello" from someone it has never heard from was the one message delivered
+  // anonymous, and a first voice note read as typed text. One builder, used by
+  // both paths, is what makes that impossible — and `PromptFrame` means pushing
+  // a bare string no longer compiles.
+  assert.deepEqual(promptFrame("hello", "Ada", true), { type: "prompt", text: "hello", from: "Ada", voice: true });
+  assert.deepEqual(promptFrame("hello", "Ada"), { type: "prompt", text: "hello", from: "Ada" });
+  // Absent, not null: the server tells "nobody said who" from "the author is
+  // the empty string", and an explicit `voice: false` would read as a typed
+  // message that bothered to say so.
+  assert.deepEqual(promptFrame("hello"), { type: "prompt", text: "hello" });
+  assert.deepEqual(promptFrame("hi", "", false), { type: "prompt", text: "hi" });
+});
+
+test("dialogText: the box's body comes first, then the question — as the TUI draws it", () => {
+  const body = "Read file\nThis will read /x/outside/note.txt (outside working directory) via a symlink\nRead(/x/cwd/link)";
+  assert.equal(dialogText({ question: "Do you want to proceed?", body }), body + "\n\nDo you want to proceed?");
+});
+
+test("dialogText: no body → the question alone, as before", () => {
+  assert.equal(dialogText({ question: "Pick one?" }), "Pick one?");
+  assert.equal(dialogText({ question: "", body: "  " }), "Choose:");
+});
+
+test("dialogText: an oversized body is cut, never the question the buttons answer", () => {
+  const t = dialogText({ question: "Do you want to proceed?", body: "x".repeat(5000) }, 100);
+  assert.ok(t.length <= 100, String(t.length));
+  assert.ok(t.endsWith("…\n\nDo you want to proceed?"), t);
 });

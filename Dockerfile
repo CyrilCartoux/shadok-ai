@@ -12,8 +12,9 @@ FROM node:22-slim
 # tmux                 : the pilot's default transport (survives a server restart).
 # gh                   : GitHub CLI for PR / issue ops.
 # jq / curl            : scripting. python3 / make / g++ : native npm modules.
+# tini                 : pid 1 that REAPS. See the ENTRYPOINT below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git openssh-client tmux ca-certificates curl jq python3 make g++ \
+      git openssh-client tmux ca-certificates curl jq python3 make g++ tini \
     && install -d -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
          -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -39,6 +40,25 @@ RUN npm install -g @anthropic-ai/claude-code shadok-ai
 
 WORKDIR /workspace
 EXPOSE 3789
+
+# --- pid 1 reaps -------------------------------------------------------------
+# Without this the supervisor is pid 1, and pid 1 is the only process that can
+# reap an ORPHAN: a child whose own parent exited is re-parented to it, and
+# Node never waits for a process it did not spawn. So every orphan an agent
+# leaves behind — a backgrounded `sleep` loop, an abandoned `esbuild` service,
+# a killed `gh` — stays in the table as a zombie FOREVER. It holds no memory and
+# no CPU, just a pid slot, which is why nothing surfaces until the cgroup's pid
+# budget runs out and the container can no longer fork at all: no new agent, no
+# `git`, no shell. Measured on a two-month-old instance: 79,055 zombies of a
+# 113,098 pid budget (70%), all with ppid 1, 55% of them `sleep`; a nine-day-old
+# one was already at 39,121. `src/lock.ts` documents the same fact from the other
+# end — it has to treat a zombie as dead, because in a container nothing reaps.
+# tini is pid 1 instead, reaps orphans as they appear, and forwards signals to
+# the supervisor, so the exit codes the supervisor relies on are unchanged.
+# An operator running an image without it gets the same thing from `docker run
+# --init`. Either way it is fixed at CREATION: a `docker restart` clears the
+# table (pid 1 restarts) but the leak starts over — see README "Running in Docker".
+ENTRYPOINT ["/usr/bin/tini", "--", "docker-entrypoint.sh"]
 
 # Web-only by default. To expose it, set SHADOK_HOST=0.0.0.0 + a password and
 # publish on the host loopback (-p 127.0.0.1:3789:3789); add a Telegram token
