@@ -1951,6 +1951,10 @@
 <div id="verMenu" hidden>
   <div class="vm-row"><span class="vm-label">Running</span><span id="vmCurrent">—</span></div>
   <div class="vm-row"><span class="vm-label">Latest</span><span id="vmLatest">—</span></div>
+  <!-- Which Claude account this cockpit runs on, and when its sign-in expires.
+       Filled from /auth when the menu opens (instance-global, not per tab). -->
+  <div class="vm-row"><span class="vm-label">Account</span><span id="vmAccount">—</span></div>
+  <div class="vm-row"><span class="vm-label">Token</span><span id="vmToken">—</span></div>
   <label class="vm-check"><input type="checkbox" id="autoUpdateChk"><span>Auto-update</span></label>
   <div class="vm-hint" id="vmHint"></div>
   <div class="vm-row"><span class="vm-label">Channel</span>
@@ -6008,9 +6012,62 @@
       : "Off — agents don't consult the shared ledger. Toggling restarts all agents.";
   }
 
+  // ── Claude account + token expiry (version menu) ──────────────────────────
+  // The login this cockpit runs on and when its sign-in expires. Fetched from
+  // /auth (instance-global) each time the menu opens, so it never goes stale in
+  // a tab left open for days.
+  let lastAuth = null;
+  /** A future instant as "in 22 days" / "in 6 h" / "in 40 min" / "expired". */
+  function fmtExpiry(ts) {
+    const s = (ts - Date.now()) / 1000;
+    if (s <= 0) return "expired";
+    const h = s / 3600;
+    if (h >= 48) return "in " + Math.round(h / 24) + " days";
+    if (h >= 1.5) return "in " + Math.round(h) + " h";
+    return "in " + Math.max(1, Math.round(s / 60)) + " min";
+  }
+  function renderAuthRows() {
+    const accEl = document.getElementById("vmAccount");
+    const tokEl = document.getElementById("vmToken");
+    if (!accEl || !tokEl) return;
+    const a = lastAuth;
+    tokEl.style.color = "";
+    if (!a || a.state === "unknown") {
+      accEl.textContent = "—"; accEl.title = "";
+      tokEl.textContent = "—"; tokEl.title = "";
+      return;
+    }
+    if (a.loggedIn === false || a.state === "signed-out") {
+      accEl.textContent = "signed out"; accEl.title = "";
+      tokEl.textContent = "—"; tokEl.title = "";
+      return;
+    }
+    accEl.textContent = (a.email || "signed in") + (a.subscriptionType ? " · " + a.subscriptionType : "");
+    accEl.title = a.authMethod ? "via " + a.authMethod : "";
+    if (typeof a.tokenExpiresAt === "number") {
+      const ms = a.tokenExpiresAt - Date.now();
+      tokEl.textContent = fmtExpiry(a.tokenExpiresAt);
+      tokEl.style.color = ms <= 0 ? "var(--err)" : ms < 3 * 86400000 ? "var(--amber)" : "";
+      tokEl.title = "Claude sign-in expires " + new Date(a.tokenExpiresAt).toLocaleString() +
+        " — a re-login is needed after this. The short-lived access token refreshes on its own.";
+    } else {
+      tokEl.textContent = "—";
+      tokEl.title = "No expiry to show (a token set via CLAUDE_CODE_OAUTH_TOKEN carries none).";
+    }
+  }
+  async function refreshAuthRows() {
+    try { lastAuth = await (await fetch("/auth")).json(); }
+    catch { lastAuth = null; }
+    if (!verMenu.hidden) renderAuthRows();
+  }
+
   function toggleVerMenu(show) {
     verMenu.hidden = show === undefined ? !verMenu.hidden : !show;
-    if (!verMenu.hidden) { renderVerMenu(); refreshReloadUpdatesBtn(); document.getElementById("vmReloadUpdatesHint").hidden = true; }
+    if (!verMenu.hidden) {
+      renderVerMenu(); refreshReloadUpdatesBtn(); document.getElementById("vmReloadUpdatesHint").hidden = true;
+      renderAuthRows();   // paint what we have, then refresh in the background
+      refreshAuthRows();
+    }
   }
 
   if (verView) verView.addEventListener("click", (e) => { e.stopPropagation(); toggleVerMenu(); });

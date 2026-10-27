@@ -38,6 +38,7 @@ import { ensureClaudeHome, ensureProjectTrusted,
   setDefaultModel,
 } from "./claude-home.js";
 import { authStatus, cancelLogin, startLogin, submitLoginCode } from "./claude-auth.js";
+import { readTokenExpiry } from "./claude-creds.js";
 import { starCount } from "./stars.js";
 import {
   announceFirstAgent,
@@ -1360,8 +1361,11 @@ app.post("/tweak/prepare", (_req, res) => {
 app.get("/version", (_req, res) => res.json(versionState()));
 
 // Claude sign-in state. Instance-global — NOT per session — hence HTTP rather
-// than a WS message: every tab and the Telegram bridge share one answer.
-app.get("/auth", async (_req, res) => res.json(await authStatus()));
+// than a WS message: every tab and the Telegram bridge share one answer. The
+// account login comes from `claude auth status`; the token expiry is read from
+// the credentials store (never the token itself) and merged in, so the version
+// menu can show WHO is signed in and WHEN a re-login will be needed.
+app.get("/auth", async (_req, res) => res.json({ ...(await authStatus()), ...readTokenExpiry() }));
 
 app.post("/auth/login", async (_req, res) => {
   const r = await startLogin();

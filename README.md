@@ -114,6 +114,12 @@ Enter to skip; you can add it later from the web UI).
   trigger to you, a product agent that writes the spec instead of the change,
   and three go-to-market roles (paid, organic, support). Each one is yours to
   edit, and a role you delete stays deleted.
+- **Which account, and when it expires** — the version menu also shows the
+  Claude login this cockpit runs on (its email and subscription) and when its
+  sign-in **expires** — i.e. when a re-login will be needed. The timestamp is
+  read from Claude Code's own credentials store, never the token itself; the
+  short-lived access token refreshes on its own, so the figure shown is the
+  session deadline, not that rotation.
 - **Secret vault** — stored under `~/.shadok-ai`, never in your repo, injected
   as env vars into the agents that need them. Add or **update** a secret from the
   panel, tick the **profiles** it should feed right there, and reload the running
@@ -756,8 +762,10 @@ right now), `/version`, `/autoupdate`,
 returns the cwd to start the tweak agent in), `/media/<name>` (GET — serves a
 pasted/dropped or Telegram attachment back for inline display; sandboxed, basename
 only), and the sign-in group: `/auth` (GET
-— `{loggedIn, email?, subscriptionType?}`), `/auth/login` (POST — start a flow,
-returns `{url}`; DELETE — cancel it), `/auth/code` (POST `{code}`).
+— `{loggedIn, email?, subscriptionType?, tokenExpiresAt?, accessExpiresAt?}`;
+the expiries come from the credentials store, never a token value), `/auth/login`
+(POST — start a flow, returns `{url}`; DELETE — cancel it), `/auth/code`
+(POST `{code}`).
 
 ## Library
 
