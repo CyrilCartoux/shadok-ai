@@ -193,7 +193,7 @@ export function cancelLogin(): void {
   flow = null;
 }
 
-export async function startLogin(): Promise<
+export async function startLogin(force = false): Promise<
   { url: string } | { alreadySignedIn: true } | { error: string }
 > {
   // Reuse a flow that already printed its URL instead of replacing it. Each
@@ -201,10 +201,15 @@ export async function startLogin(): Promise<
   // link the user is already looking at — which a plain page reload, or a
   // second tab, would otherwise do.
   if (flow && !flow.ended && flow.url) return { url: flow.url };
-  // Never spawn a sign-in on an instance that is already signed in. This is the
-  // backstop for the whole class of "it launched for nothing": whatever led the
-  // caller here, a forced re-check has the last word.
-  if ((await authStatus(true)).state === "signed-in") return { alreadySignedIn: true };
+  // Never spawn a sign-in on an instance that is already signed in — UNLESS the
+  // caller explicitly forces it. This is the backstop for the whole class of
+  // "it launched for nothing" (an auto card on a signed-in instance), but a
+  // deliberate "re-login now" IS the signed-in case: the user wants to renew
+  // the session BEFORE its refresh token lapses. Verified against the real CLI:
+  // `claude auth login --claudeai` while signed in prints a fresh URL and a
+  // code prompt — a working re-login, writing new credentials only on a code
+  // exchange — so forcing is both necessary and sufficient here.
+  if (!force && (await authStatus(true)).state === "signed-in") return { alreadySignedIn: true };
   cancelLogin();
   const child = spawn(claudeCommand(), ["auth", "login", "--claudeai"], {
     // BROWSER is neutralised: on a desktop host the CLI would otherwise open a

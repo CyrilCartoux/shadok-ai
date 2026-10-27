@@ -6128,7 +6128,7 @@
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = "Re-login now";
-      btn.addEventListener("click", () => openAuthCard());
+      btn.addEventListener("click", () => openAuthCard(true));
       el.append(span, btn);
       document.body.appendChild(el);
     }
@@ -6309,7 +6309,7 @@
   // OAuth URL from being hidden behind it.
   document.getElementById("reloginBtn").addEventListener("click", () => {
     toggleVerMenu(false);
-    openAuthCard();
+    openAuthCard(true);
   });
 
   function showUpdateBanner(version) {
@@ -8923,7 +8923,11 @@
     }
   }
 
-  async function openAuthCard() {
+  // `force` is a deliberate re-login from a SIGNED-IN instance (the version-menu
+  // button and the expiry banner). Without it the server short-circuits to
+  // {alreadySignedIn} and the card closes doing nothing — which is exactly the
+  // no-op the signed-in re-login affordances would otherwise be.
+  async function openAuthCard(force = false) {
     if (!$("authOverlay").hidden) return;   // a flow is already on screen
     $("authOverlay").hidden = false;
     $("authMsg").hidden = true;
@@ -8931,7 +8935,11 @@
     link.textContent = "starting…";
     link.removeAttribute("href");
     try {
-      const r = await (await fetch("/auth/login", { method: "POST" })).json();
+      const r = await (await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      })).json();
       // The server has the last word: it re-checks, and if the instance turns
       // out to be signed in it spawns nothing and says so.
       if (r && r.alreadySignedIn) { $("authOverlay").hidden = true; return; }

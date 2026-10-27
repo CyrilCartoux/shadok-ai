@@ -1616,8 +1616,13 @@ app.get("/version", (_req, res) => res.json(versionState()));
 // menu can show WHO is signed in and WHEN a re-login will be needed.
 app.get("/auth", async (_req, res) => res.json({ ...(await authStatus()), ...readTokenExpiry() }));
 
-app.post("/auth/login", async (_req, res) => {
-  const r = await startLogin();
+app.post("/auth/login", async (req, res) => {
+  // `force` is a deliberate "re-login now" from a signed-in instance (the
+  // version-menu button and the expiry reminder banner): renew the session
+  // before its refresh token lapses. Without it, a signed-in instance short-
+  // circuits to {alreadySignedIn} and nothing spawns.
+  const force = req.body?.force === true;
+  const r = await startLogin(force);
   if ("error" in r) return res.status(502).json(r);
   res.json(r);   // {url} or {alreadySignedIn:true} — the latter spawns nothing
 });
