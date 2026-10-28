@@ -77,8 +77,8 @@ Enter to skip; you can add it later from the web UI).
   grouping, and closing all sync live between the browser and Telegram: it's
   one list, server-owned, not two copies.
 - **Groups column** — on a desktop the groups get a column of their own, left
-  of the agents: pick a group and the agents column shows only its agents (the
-  home agent stays visible in every group; *Ungrouped* holds the rest). Each
+  of the agents: pick a group and the agents column shows only its agents
+  (*Ungrouped* holds the rest, the home agent included unless you file it). Each
   group has an icon — drawn at random, click it to pick another or type any
   emoji — and a **＋** that creates the new agent straight into that group.
   Dragging an agent onto a group still files it there, and dragging groups
