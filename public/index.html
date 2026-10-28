@@ -795,10 +795,12 @@
     background: var(--menu-bg); border: 1px solid var(--line); border-radius: 8px;
     padding: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); width: 212px;
   }
-  .icon-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 8px; }
+  .icon-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 8px; max-height: 176px; overflow-y: auto; }
   .icon-grid button { border: 1px solid transparent; background: none; font-size: 18px; padding: 4px 0; border-radius: 5px; }
   .icon-grid button:hover, .icon-grid button.current { border-color: var(--line); background: var(--menu-hover); }
-  .icon-picker input { width: 100%; font-size: 13px; }
+  .icon-grid:empty { display: none; }
+  .icon-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 8px 2px 2px; }
+  .icon-picker input { width: 100%; font-size: 13px; box-sizing: border-box; }
 
   /* ── Body ────────────────────────────────────────────── */
   main { flex: 1; display: flex; min-height: 0; }
@@ -2552,8 +2554,9 @@
     <button id="newGroup" title="New agent group">＋ <span class="rail-txt">new group</span></button>
   </nav>
   <div id="iconPicker" class="icon-picker" hidden>
+    <input id="iconInput" placeholder="type a word (rocket, bug…) or an emoji" autocomplete="off" spellcheck="false">
     <div id="iconGrid" class="icon-grid"></div>
-    <input id="iconInput" placeholder="or type an emoji…" autocomplete="off" spellcheck="false">
+    <div id="iconEmpty" class="icon-empty" hidden>No emoji for that word.</div>
   </div>
   <nav id="tabbar" aria-label="Agents">
     <div class="label side-label"><span class="sl-all">Agents</span><span class="sl-view" id="viewLabel"></span></div>
@@ -2749,6 +2752,9 @@
   window.resolveGroupView = resolveGroupView;
   window.groupMood = groupMood;
   window.cleanGroupIcon = cleanGroupIcon;
+  import { searchEmoji, looksLikeEmoji } from "/emoji-search.js?v=__ASSET_V__";
+  window.searchEmoji = searchEmoji;
+  window.looksLikeEmoji = looksLikeEmoji;
   import { uploadFailure } from "/upload.js?v=__ASSET_V__";
   window.uploadFailure = uploadFailure;
   import { fmtExpiry, expiryWarning } from "/auth-expiry.js?v=__ASSET_V__";
@@ -2885,6 +2891,11 @@
     resolveGroupView: (saved, ids) => ((ids || []).map(String).includes(String(saved)) ? String(saved) : "ungrouped"),
     groupMood: (moods) => ["needs-answer", "unread", "working"].find((m) => (moods || []).includes(m)) || null,
     cleanGroupIcon: (t) => String(t ?? "").trim() || null,
+    // The emoji keyword search feeds the icon picker, which opens well after
+    // load; before the module lands, no suggestions (and typed text is treated
+    // as a word, not an emoji) — both harmless, repainted on bridge-ready.
+    searchEmoji: () => [],
+    looksLikeEmoji: () => false,
     uploadFailure: (status, contentType) =>
       /json/i.test(contentType || "") ? null : status === 413 ? "too large (over the server's upload limit)" : `upload failed (HTTP ${status || "?"})`,
   };
@@ -4354,20 +4365,39 @@
     }
     closeIconPicker();
   }
-  function openIconPicker(group, anchor) {
-    iconTarget = group;
+  // What the grid shows: the default set when the field is empty, the emoji the
+  // user typed when the field already holds one, otherwise the emojis whose
+  // keywords match the typed word(s). This is what turns the field from "type
+  // an emoji" into "type a word and pick one" — the two-letters trap was that a
+  // typed word ("rocket") was simply truncated by cleanGroupIcon to "ro".
+  function iconCandidates(query) {
+    const q = String(query || "").trim();
+    if (!q) return { list: window.GROUP_ICONS || ["📁"], isDefault: true };
+    if (window.looksLikeEmoji(q)) return { list: [window.cleanGroupIcon(q)].filter(Boolean), isDefault: false };
+    return { list: window.searchEmoji(q), isDefault: false };
+  }
+  function paintIconGrid(query) {
     const grid = $("iconGrid");
+    const { list, isDefault } = iconCandidates(query);
+    const current = iconTarget && iconTarget.icon;
     grid.replaceChildren(
-      ...(window.GROUP_ICONS || ["📁"]).map((ic) => {
+      ...list.map((ic) => {
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = ic;
-        if (ic === group.icon) b.classList.add("current");
+        if (isDefault && ic === current) b.classList.add("current");
         b.addEventListener("click", (e) => { e.stopPropagation(); setGroupIcon(ic); });
         return b;
       }),
     );
+    // A searched word with no match: say so rather than leave a blank box.
+    const q = String(query || "").trim();
+    $("iconEmpty").hidden = !(q && !window.looksLikeEmoji(q) && list.length === 0);
+  }
+  function openIconPicker(group, anchor) {
+    iconTarget = group;
     iconInput.value = "";
+    paintIconGrid("");
     iconPicker.hidden = false;
     const r = anchor.getBoundingClientRect();
     iconPicker.style.left = Math.min(r.left, innerWidth - iconPicker.offsetWidth - 8) + "px";
@@ -4379,10 +4409,18 @@
     iconTarget = null;
   }
   iconPicker.addEventListener("click", (e) => e.stopPropagation());
+  iconInput.addEventListener("input", () => paintIconGrid(iconInput.value));
   iconInput.addEventListener("keydown", (e) => {
     e.stopPropagation();
-    if (e.key === "Enter") { e.preventDefault(); setGroupIcon(iconInput.value); }
-    if (e.key === "Escape") closeIconPicker();
+    if (e.key === "Escape") return closeIconPicker();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const v = iconInput.value;
+      // A literal emoji sets itself; a searched word takes the first match.
+      if (window.looksLikeEmoji(v)) return setGroupIcon(v);
+      const hit = window.searchEmoji(v)[0];
+      if (hit) setGroupIcon(hit);
+    }
   });
   document.addEventListener("click", () => { if (!iconPicker.hidden) closeIconPicker(); });
 

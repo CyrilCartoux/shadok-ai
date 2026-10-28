@@ -79,8 +79,10 @@ Enter to skip; you can add it later from the web UI).
 - **Groups column** — on a desktop the groups get a column of their own, left
   of the agents: pick a group and the agents column shows only its agents
   (*Ungrouped* holds the rest, the home agent included unless you file it). Each
-  group has an icon — drawn at random, double-click it to pick another or type
-  any emoji — and a **＋** that creates the new agent straight into that group.
+  group has an icon — drawn at random, double-click it to pick another: choose
+  from the grid, type any emoji, or **type a word** (`rocket`, `bug`, `money`…)
+  to search for a matching one — and a **＋** that creates the new agent straight
+  into that group.
   A single click on a group (its icon or its row) selects it; this matters once
   **«** folds the column to its icons, where the icon is the whole row.
   Dragging an agent onto a group still files it there, and dragging groups
