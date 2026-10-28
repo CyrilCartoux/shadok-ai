@@ -2384,9 +2384,14 @@
 <div id="authOverlay" class="overlay" hidden>
   <div id="authPanel" class="sec-panel">
     <div class="sec-head">
-      <strong>Sign in to Claude</strong>
+      <strong id="authTitle">Sign in to Claude</strong>
+      <!-- Shown only for a VOLUNTARY re-login (opened from the panel / banner
+           while already signed in): that card is optional, so it must close.
+           The signed-OUT card has no ✕ on purpose — signing in is the only way
+           to make the instance usable, so it stays a funnel. -->
+      <button id="authClose" type="button" title="Cancel" hidden aria-label="Cancel">✕</button>
     </div>
-    <p class="sec-note">This instance isn't signed in to Claude, so it can't start any agent.</p>
+    <p class="sec-note" id="authNote">This instance isn't signed in to Claude, so it can't start any agent.</p>
     <div class="field">
       <span class="label">1 — Open this link and authorise</span>
       <a id="authLink" target="_blank" rel="noopener">starting…</a>
@@ -7655,6 +7660,8 @@
     if (!$("setupOverlay").hidden) { closeSetup(); e.preventDefault(); return; }
     if (!$("cronOverlay").hidden) { $("cronOverlay").hidden = true; e.preventDefault(); return; }
     if (!$("telegramOverlay").hidden) { $("telegramOverlay").hidden = true; e.preventDefault(); return; }
+    // Only a voluntary (dismissable) re-login card; the signed-out funnel ignores Escape.
+    if (!$("authOverlay").hidden && authDismissable) { closeAuthCard(); e.preventDefault(); return; }
     if ($("diffpanel").classList.contains("open")) { $("diffpanel").classList.remove("open"); e.preventDefault(); return; }
     // 2. A clickable dialog awaiting an answer → do nothing.
     if (active && active.dialogBubble) return;
@@ -9113,8 +9120,31 @@
   // button and the expiry banner). Without it the server short-circuits to
   // {alreadySignedIn} and the card closes doing nothing — which is exactly the
   // no-op the signed-in re-login affordances would otherwise be.
+  // A voluntary re-login (force) is dismissable; the signed-out funnel is not.
+  // Tracked so Escape and a backdrop click only close the card they should.
+  let authDismissable = false;
+
+  // Close a VOLUNTARY re-login card, cancelling the pending `claude auth login`
+  // child on the server so it is not left waiting on stdin (DELETE /auth/login
+  // → cancelLogin). Never the way out of the signed-out funnel.
+  function closeAuthCard() {
+    if (!authDismissable) return;
+    fetch("/auth/login", { method: "DELETE" }).catch(() => {});
+    authDismissable = false;
+    $("authClose").hidden = true;
+    $("authOverlay").hidden = true;
+  }
+
   async function openAuthCard(force = false) {
     if (!$("authOverlay").hidden) return;   // a flow is already on screen
+    authDismissable = force;
+    $("authClose").hidden = !force;
+    // A forced re-login comes from a SIGNED-IN instance, so the "not signed in"
+    // copy would be wrong there; say what the card actually does.
+    $("authTitle").textContent = force ? "Re-login to Claude" : "Sign in to Claude";
+    $("authNote").textContent = force
+      ? "Renew this instance's Claude sign-in. Your agents keep running in the meantime."
+      : "This instance isn't signed in to Claude, so it can't start any agent.";
     $("authOverlay").hidden = false;
     $("authMsg").hidden = true;
     const link = $("authLink");
@@ -9174,6 +9204,10 @@
       msg.hidden = false;
     }
   });
+
+  $("authClose").addEventListener("click", closeAuthCard);
+  // Backdrop click closes a dismissable (voluntary) card; the panel itself does not.
+  $("authOverlay").addEventListener("click", (e) => { if (e.target === $("authOverlay")) closeAuthCard(); });
 
   $("tgUnbind").addEventListener("click", () => { if (confirm("Unbind the current board group? You'll need to /setup a group again in Telegram.")) putTelegram({ unbindGroup: true }); });
   $("telegramBtn").addEventListener("click", () => { $("telegramOverlay").hidden = false; loadTelegram(); });
