@@ -2532,6 +2532,19 @@
 <script src="/vendor/marked.js"></script>
 <script src="/vendor/simplewebauthn.js"></script>
 <script src="/vendor/purify.js"></script>
+<!-- Render agent Markdown with GFM soft line breaks ON. The .jsonl carries
+     newlines where the agent meant them (one URL per line, a short list), but
+     the default Markdown rule turns a LONE "\n" into a word-space, so those
+     lines glued into one wrapped run in the chat bubble while the engine-room
+     screen and Telegram — which don't go through marked — showed them
+     correctly. `breaks: true` makes a single newline a <br>, the same choice
+     GitHub comments make. One global policy, so every render site (chat bubble,
+     compaction summary, any future one) stays consistent. Carries the nonce
+     like every inline block (invariant 12). -->
+<script nonce="__CSP_NONCE__">
+  if (window.marked && typeof marked.setOptions === "function")
+    marked.setOptions({ breaks: true });
+</script>
 <!-- The inline blocks carry the CSP nonce, injected by the server on every
      request (src/csp.ts). A block without it does not run — which is what makes
      HTML an agent might write into the transcript harmless. -->
