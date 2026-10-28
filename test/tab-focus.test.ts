@@ -38,6 +38,8 @@ test("the callers that ARE the user asking still take the view", () => {
   // nothing visible. (The phone's "new agent" no longer has its own createTab():
   // it goes through the same setup overlay → Start-agent as the desktop, so the
   // count is 2, not 3 — the old native <select>'s redundant createTab() is gone.)
-  const bare = html.match(/createTab\(\)/g) ?? [];
+  // Start-agent passes the group on screen (the groups column's ＋) — still no
+  // options, so still the default focus.
+  const bare = html.match(/createTab\((?:viewGroupId\(\))?\)/g) ?? [];
   assert.ok(bare.length >= 2, `expected the user-driven callers to keep the default, saw ${bare.length}`);
 });

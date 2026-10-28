@@ -702,6 +702,104 @@
     border-radius: 4px;
   }
 
+  /* ── Groups column (two-column navigation, desktop) ─────
+     The rail lists the groups; the agents column shows the selected one. The
+     agents column keeps its DOM (groups, bodies, tabs) because that is what is
+     persisted, so the filtering below is pure CSS over it: group heads go (the
+     rail is the header now), bodies are always unfolded, and every tab outside
+     the selected group is hidden — except the home agent, which stays reachable
+     whatever is selected. Phones (≤640px) keep the single-column sheet. */
+  #groupRail { display: none; }
+  .icon-picker[hidden] { display: none; }
+  @media (min-width: 641px) {
+    #groupRail {
+      width: 190px; flex: none;
+      display: flex; flex-direction: column; gap: 2px;
+      background: var(--bg-inset);
+      border-right: 1px solid var(--line);
+      padding: 12px 8px; overflow-y: auto;
+    }
+    .rail-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 8px 8px; }
+    #railMini { border: none; background: none; padding: 2px 6px; color: var(--text-dim); font-size: 13px; }
+    #railMini:hover { color: var(--amber); }
+    #railList { display: flex; flex-direction: column; gap: 2px; }
+    .rail-item {
+      position: relative;
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: 6px; border: 1px solid transparent;
+      cursor: pointer; user-select: none; color: var(--text-dim); font-size: 13px;
+    }
+    .rail-item:hover { background: var(--bg-raised); color: var(--text); }
+    .rail-item.active { background: var(--bg-raised); border-color: var(--line); color: var(--text); }
+    .rail-item.drop-target { border-color: var(--amber); border-style: dashed; }
+    .rail-item.dragging { opacity: 0.4; }
+    .rail-icon {
+      flex: none; width: 24px; height: 24px; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid transparent; border-radius: 5px; background: none; font-size: 15px; line-height: 1;
+    }
+    .rail-item.editable .rail-icon:hover { border-color: var(--line); background: var(--bg-inset); }
+    .rail-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rail-item input.rename {
+      flex: 1; min-width: 0; font-size: 12px;
+      background: var(--bg-inset); border: 1px solid var(--amber); border-radius: 3px;
+      color: var(--text); padding: 2px 5px;
+    }
+    .rail-count { flex: none; font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+    /* What a group that is not on screen asks of you — the single place it shows. */
+    .rail-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; display: none; }
+    .rail-item.needs-answer .rail-dot { display: block; background: var(--amber); animation: breathe 1.2s ease-in-out infinite; }
+    .rail-item.unread .rail-dot { display: block; background: var(--phosphor); }
+    .rail-item.working .rail-dot { display: block; background: var(--text-dim); animation: breathe 1.8s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) { .rail-dot { animation: none !important; } }
+    .rail-add, .rail-del {
+      flex: none; display: none; border: none; background: none;
+      padding: 0 3px; font-size: 13px; line-height: 1; color: var(--text-dim);
+    }
+    .rail-item:hover .rail-add, .rail-item:hover .rail-del { display: inline-block; }
+    .rail-item:hover .rail-count { display: none; }
+    .rail-add:hover { color: var(--amber); }
+    .rail-del:hover { color: var(--err); }
+    #groupRail #newGroup {
+      margin-top: 8px; border: 1px dashed var(--line);
+      font-size: 12px; color: var(--text-dim); padding: 8px;
+    }
+    #groupRail #newGroup:hover { color: var(--amber); border-color: var(--amber); }
+    /* Collapsed to icons, like a dock: the names live in the tooltips. */
+    body.rail-mini #groupRail { width: 52px; padding: 12px 6px; }
+    body.rail-mini .rail-head { justify-content: center; padding: 0 0 8px; }
+    body.rail-mini .rail-head .label,
+    body.rail-mini .rail-name, body.rail-mini .rail-count,
+    body.rail-mini .rail-add, body.rail-mini .rail-del,
+    body.rail-mini .rail-txt { display: none !important; }
+    body.rail-mini .rail-item { justify-content: center; padding: 6px 0; }
+    body.rail-mini .rail-dot { position: absolute; top: 4px; right: 4px; }
+
+    /* The agents column, narrowed to the selected group. */
+    #tabbar .side-label .sl-all { display: none; }
+    #tabbar .group-head { display: none; }
+    #tabbar .group { margin-top: 0; }
+    #tabbar .group-body { padding-left: 0; }
+    #tabbar .group.collapsed .group-body { display: flex; }
+    #tabbar:not([data-view="ungrouped"]) #ungrouped .tab:not(.main-tab),
+    #tabbar[data-view="ungrouped"] #groups .tab:not(.main-tab),
+    #tabbar .group:not(.in-view) .tab:not(.main-tab) { display: none; }
+    #tabbar:not([data-view="ungrouped"]) #ungrouped:not(:has(.main-tab)),
+    #tabbar .group:not(.in-view):not(:has(.main-tab)) { display: none; }
+  }
+  @media (max-width: 640px) {
+    #tabbar .side-label .sl-view, #viewEmpty { display: none; }
+  }
+  .icon-picker {
+    position: fixed; z-index: 60;
+    background: var(--menu-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); width: 212px;
+  }
+  .icon-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 8px; }
+  .icon-grid button { border: 1px solid transparent; background: none; font-size: 18px; padding: 4px 0; border-radius: 5px; }
+  .icon-grid button:hover, .icon-grid button.current { border-color: var(--line); background: var(--menu-hover); }
+  .icon-picker input { width: 100%; font-size: 13px; }
+
   /* ── Body ────────────────────────────────────────────── */
   main { flex: 1; display: flex; min-height: 0; }
   /* min-height:0 so the transcript (flex:1) bounds the height instead of pushing
@@ -2441,12 +2539,28 @@
 </div>
 
 <main>
+  <!-- The groups column (desktop only): a VIEW over the agents column beside it,
+       which still holds the groups, their order and their members — that is what
+       is persisted. Picking a group narrows the agents column to it. On a phone
+       this column is hidden and the agents sheet shows every group, as before. -->
+  <nav id="groupRail" aria-label="Groups">
+    <div class="rail-head">
+      <span class="label">Groups</span>
+      <button id="railMini" type="button" title="Collapse the groups column">«</button>
+    </div>
+    <div id="railList"></div>
+    <button id="newGroup" title="New agent group">＋ <span class="rail-txt">new group</span></button>
+  </nav>
+  <div id="iconPicker" class="icon-picker" hidden>
+    <div id="iconGrid" class="icon-grid"></div>
+    <input id="iconInput" placeholder="or type an emoji…" autocomplete="off" spellcheck="false">
+  </div>
   <nav id="tabbar" aria-label="Agents">
-    <div class="label side-label">Agents</div>
+    <div class="label side-label"><span class="sl-all">Agents</span><span class="sl-view" id="viewLabel"></span></div>
     <div id="ungrouped"></div>
     <div id="groups"></div>
+    <p id="viewEmpty" class="check-hint" hidden>No agent in this group yet — create one, or drag one onto the group.</p>
     <button id="newTab" title="New agent">＋ new agent</button>
-    <button id="newGroup" title="New agent group">＋ new group</button>
     <div id="tweakSlot">
       <button id="tweakCta" type="button"
               title="Change shadok-ai itself — the agent works on a branch and opens a pull request">
@@ -2628,6 +2742,13 @@
   window.buildMessageLink = buildMessageLink;
   window.parseMessageLink = parseMessageLink;
   window.samePrompt = samePrompt;
+  import { GROUP_ICONS, UNGROUPED, randomGroupIcon, resolveGroupView, groupMood, cleanGroupIcon } from "/group-nav.js?v=__ASSET_V__";
+  window.GROUP_ICONS = GROUP_ICONS;
+  window.UNGROUPED = UNGROUPED;
+  window.randomGroupIcon = randomGroupIcon;
+  window.resolveGroupView = resolveGroupView;
+  window.groupMood = groupMood;
+  window.cleanGroupIcon = cleanGroupIcon;
   import { uploadFailure } from "/upload.js?v=__ASSET_V__";
   window.uploadFailure = uploadFailure;
   import { fmtExpiry, expiryWarning } from "/auth-expiry.js?v=__ASSET_V__";
@@ -2758,6 +2879,12 @@
     buildMessageLink: () => null,
     parseMessageLink: () => null,
     samePrompt: () => false,
+    // The rail must paint even before the module lands: a plain folder icon, the
+    // saved view if it still names a group, and the mood logic as in the module.
+    randomGroupIcon: () => "📁",
+    resolveGroupView: (saved, ids) => ((ids || []).map(String).includes(String(saved)) ? String(saved) : "ungrouped"),
+    groupMood: (moods) => ["needs-answer", "unread", "working"].find((m) => (moods || []).includes(m)) || null,
+    cleanGroupIcon: (t) => String(t ?? "").trim() || null,
     uploadFailure: (status, contentType) =>
       /json/i.test(contentType || "") ? null : status === 413 ? "too large (over the server's upload limit)" : `upload failed (HTTP ${status || "?"})`,
   };
@@ -3847,6 +3974,7 @@
 
   // ── Tab groups ──────────────────────────────────────────
   let groups = [];
+  let groupIconsMinted = false;
   let groupSeq = Number(localStorage.getItem("cp.groupSeq") || 0);
 
   function groupIdOf(tabEl) {
@@ -3859,6 +3987,7 @@
     const list = [...groupsEl.children].map((el) => ({
       id: el._group.id,
       name: el._group.nameEl.textContent,
+      icon: el._group.icon,
       collapsed: el.classList.contains("collapsed"),
     }));
     localStorage.setItem(dirKey("cp.groups", instanceKey), JSON.stringify(list));
@@ -3898,7 +4027,11 @@
     el.append(head, body);
     groupsEl.appendChild(el);
 
-    const group = { id, el, headEl: head, bodyEl: body, nameEl: gname };
+    // Every group carries an icon for the rail; one restored without (made before
+    // icons existed) gets a random one, persisted once the restore is over.
+    const icon = opts.icon || window.randomGroupIcon();
+    if (!opts.icon) groupIconsMinted = true;
+    const group = { id, el, headEl: head, bodyEl: body, nameEl: gname, icon, iconDrawn: !opts.icon };
     el._group = group;
     const paintCaret = () => {
       caret.textContent = el.classList.contains("collapsed") ? "▸" : "▾";
@@ -3941,11 +4074,16 @@
   let dragGroupEl = null;
 
   function endDrag() {
+    const wasGroup = !!dragGroupEl;
     if (dragTabEl) dragTabEl.classList.remove("dragging");
     if (dragGroupEl) dragGroupEl.classList.remove("dragging");
     dragTabEl = dragGroupEl = null;
     document.body.classList.remove("dragging-tab");
+    document.querySelectorAll(".rail-item.drop-target, .rail-item.dragging").forEach((r) => r.classList.remove("drop-target", "dragging"));
     persistChannels();
+    if (wasGroup) persistGroups();
+    railSig = "";
+    renderRail();
   }
 
   tabbar.addEventListener("dragover", (e) => {
@@ -3986,6 +4124,269 @@
   });
   tabbar.addEventListener("drop", (e) => {
     if (dragTabEl || dragGroupEl) e.preventDefault();
+  });
+
+  // ── Groups column (two-column navigation) ──────────────
+  // A VIEW over the agents column: it reads the groups from `groups` / the DOM
+  // and writes back through the same calls the column always used
+  // (persistGroups, persistChannels), so there is one source of truth.
+  const railEl = $("groupRail"), railList = $("railList");
+  const VIEW_KEY = () => dirKey("cp.groupView", instanceKey);
+  let groupView = localStorage.getItem(VIEW_KEY()) || "ungrouped";
+
+  /** Is the two-column layout on screen? (Hidden on a phone.) */
+  const railShown = () => getComputedStyle(railEl).display !== "none";
+
+  function currentView() {
+    return window.resolveGroupView(groupView, groups.map((g) => g.id));
+  }
+  /** The group a new agent goes into: the one on screen, none on a phone. */
+  function viewGroupId() {
+    if (!railShown()) return null;
+    const v = currentView();
+    return v === "ungrouped" ? null : Number(v);
+  }
+  const viewOfTab = (tab) => {
+    const id = groupIdOf(tab.btnEl);
+    return id == null ? "ungrouped" : String(id);
+  };
+  const tabsInView = (v) =>
+    tabs.filter((t) => !t.btnEl.closest("#tweakSlot") && viewOfTab(t) === v);
+
+  function setView(v, { follow = true } = {}) {
+    groupView = String(v);
+    localStorage.setItem(VIEW_KEY(), groupView);
+    applyView();
+    // Picking a group shows one of ITS agents: staying on an agent that is no
+    // longer in the list would leave the chat and the list disagreeing.
+    // The home agent is visible in every group, but picking a group still means
+    // "show me that group": it opens one of the group's own agents.
+    if (follow && active && !active.btnEl.closest("#tweakSlot") && (active.isMain || viewOfTab(active) !== currentView())) {
+      const first = tabsInView(currentView()).find((t) => !t.isMain);
+      if (first) activate(first);
+    }
+  }
+  /** Whatever opens an agent (a click, a link, a notification) brings its group. */
+  function showTabGroup(tab) {
+    if (!tab || tab.isMain || tab.btnEl.closest("#tweakSlot")) return;
+    const v = viewOfTab(tab);
+    if (v !== currentView()) setView(v, { follow: false });
+  }
+
+  function applyView() {
+    const v = currentView();
+    tabbar.dataset.view = v;
+    for (const g of groups) g.el.classList.toggle("in-view", String(g.id) === v);
+    const g = groups.find((x) => String(x.id) === v);
+    $("viewLabel").textContent = g ? `${g.icon} ${g.nameEl.textContent}` : "Ungrouped";
+    $("viewEmpty").hidden = tabsInView(v).some((t) => !t.isMain) || v === "ungrouped";
+    renderRail();
+  }
+
+  const moodOf = (t) =>
+    ["needs-answer", "unread", "working"].find((m) => t.btnEl.classList.contains(m)) || null;
+
+  function railItem({ view, icon, name, group }) {
+    const members = tabsInView(view).filter((t) => !t.isMain);
+    const item = document.createElement("div");
+    item.className = "rail-item" + (group ? " editable" : "");
+    item.dataset.view = view;
+    item.title = name;
+    if (view === currentView()) item.classList.add("active");
+    // The mood of a group you are NOT looking at — the one you are looking at
+    // already shows it on each agent.
+    const mood = view === currentView() ? null : window.groupMood(members.map(moodOf));
+    if (mood) item.classList.add(mood);
+    const ic = document.createElement("button");
+    ic.type = "button";
+    ic.className = "rail-icon";
+    ic.textContent = icon;
+    if (group) ic.title = "Change the icon";
+    const nm = document.createElement("span");
+    nm.className = "rail-name";
+    nm.textContent = name;
+    const count = document.createElement("span");
+    count.className = "rail-count";
+    count.textContent = members.length || "";
+    const dot = document.createElement("span");
+    dot.className = "rail-dot";
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "rail-add";
+    add.textContent = "＋";
+    add.title = "New agent in " + name;
+    item.append(ic, nm, dot, count, add);
+    if (group) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "rail-del";
+      del.textContent = "×";
+      del.title = "Ungroup (its agents move to Ungrouped)";
+      item.appendChild(del);
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        dissolveGroup(group);
+        persistGroups();
+        applyView();
+      });
+      ic.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openIconPicker(group, ic);
+      });
+      nm.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        inlineRename(item, nm, (v) => {
+          group.nameEl.textContent = v;
+          persistGroups();
+          applyView();
+        });
+      });
+      // Reorder groups by dragging them in the rail; the agents column's order
+      // follows, since that is the order persisted.
+      item.draggable = true;
+      item.addEventListener("dragstart", (e) => {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", "group");
+        dragGroupEl = group.el;
+        requestAnimationFrame(() => item.classList.add("dragging"));
+      });
+      item.addEventListener("dragend", () => endDrag());
+    }
+    item.addEventListener("click", () => setView(view));
+    add.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setView(view, { follow: false });
+      openSetup();
+    });
+    // A dragged AGENT dropped on a group is filed into it (the drag in the
+    // agents column still works too).
+    item.addEventListener("dragover", (e) => {
+      if (dragTabEl) {
+        if (dragTabEl.closest("#tweakSlot")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        item.classList.add("drop-target");
+      } else if (dragGroupEl && group && dragGroupEl !== group.el) {
+        e.preventDefault();
+        const from = railList.querySelector(".rail-item.dragging");
+        const r = item.getBoundingClientRect();
+        const after = e.clientY > r.top + r.height / 2;
+        groupsEl.insertBefore(dragGroupEl, after ? group.el.nextSibling : group.el);
+        if (from) railList.insertBefore(from, after ? item.nextSibling : item);
+      }
+    });
+    item.addEventListener("dragleave", () => item.classList.remove("drop-target"));
+    item.addEventListener("drop", (e) => {
+      e.preventDefault();
+      if (!dragTabEl) return;
+      const body = group ? group.bodyEl : ungroupedEl;
+      if (dragTabEl.parentNode !== body) body.appendChild(dragTabEl);
+      endDrag();
+    });
+    return item;
+  }
+
+  let railFrame = 0;
+  let railSig = "";
+  function renderRail() {
+    // Not while a group is being dragged (the dragged item must survive until its
+    // dragend) nor while a name is being typed (a re-render would eat the input).
+    if (dragGroupEl || railList.querySelector("input.rename")) return;
+    const entries = [
+      { view: "ungrouped", icon: "📥", name: "Ungrouped" },
+      ...[...groupsEl.children].map((el) =>
+        ({ view: String(el._group.id), icon: el._group.icon, name: el._group.nameEl.textContent, group: el._group })),
+    ];
+    // The column mutates all the time (LEDs, timers, reconnects): rebuild only
+    // when what the rail SHOWS changed, or every click would land on an item
+    // replaced under the pointer.
+    const v = currentView();
+    const sig = v + "|" + entries.map((e) => {
+      const members = tabsInView(e.view).filter((t) => !t.isMain);
+      return [e.view, e.icon, e.name, members.length, members.map(moodOf).join(",")].join("/");
+    }).join("|");
+    if (sig !== railSig) {
+      railSig = sig;
+      railList.replaceChildren(...entries.map(railItem));
+    }
+    if (groupIconsMinted && !restoring) {
+      groupIconsMinted = false;
+      persistGroups();
+    }
+  }
+  // Any change in the agents column — a tab added, moved or closed, a group
+  // created or dissolved, a mood class — repaints the rail, once per frame.
+  // The rail lives outside the column, so painting it never re-triggers this.
+  new MutationObserver(() => {
+    if (railFrame) return;
+    railFrame = requestAnimationFrame(() => {
+      railFrame = 0;
+      applyView();
+    });
+  }).observe(tabbar, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+
+  // The icon picker: the shortlist, or any emoji typed in.
+  const iconPicker = $("iconPicker"), iconInput = $("iconInput");
+  let iconTarget = null;
+  function setGroupIcon(icon) {
+    const clean = window.cleanGroupIcon(icon);
+    if (iconTarget && clean) {
+      iconTarget.icon = clean;
+      persistGroups();
+      applyView();
+    }
+    closeIconPicker();
+  }
+  function openIconPicker(group, anchor) {
+    iconTarget = group;
+    const grid = $("iconGrid");
+    grid.replaceChildren(
+      ...(window.GROUP_ICONS || ["📁"]).map((ic) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = ic;
+        if (ic === group.icon) b.classList.add("current");
+        b.addEventListener("click", (e) => { e.stopPropagation(); setGroupIcon(ic); });
+        return b;
+      }),
+    );
+    iconInput.value = "";
+    iconPicker.hidden = false;
+    const r = anchor.getBoundingClientRect();
+    iconPicker.style.left = Math.min(r.left, innerWidth - iconPicker.offsetWidth - 8) + "px";
+    iconPicker.style.top = Math.min(r.bottom + 4, innerHeight - iconPicker.offsetHeight - 8) + "px";
+    iconInput.focus();
+  }
+  function closeIconPicker() {
+    iconPicker.hidden = true;
+    iconTarget = null;
+  }
+  iconPicker.addEventListener("click", (e) => e.stopPropagation());
+  iconInput.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); setGroupIcon(iconInput.value); }
+    if (e.key === "Escape") closeIconPicker();
+  });
+  document.addEventListener("click", () => { if (!iconPicker.hidden) closeIconPicker(); });
+
+  // Collapse the rail to its icons; remembered per browser.
+  function applyRailMini(on) {
+    document.body.classList.toggle("rail-mini", on);
+    $("railMini").textContent = on ? "»" : "«";
+    $("railMini").title = on ? "Expand the groups column" : "Collapse the groups column";
+  }
+  applyRailMini(localStorage.getItem("cp.railMini") === "1");
+  $("railMini").addEventListener("click", () => {
+    const on = !document.body.classList.contains("rail-mini");
+    localStorage.setItem("cp.railMini", on ? "1" : "0");
+    applyRailMini(on);
+  });
+  // A group restored before the module landed drew the stub's plain folder:
+  // draw again for real now (re-drawing a real draw is harmless — none of them
+  // has been persisted or shown for more than an instant).
+  window.addEventListener("shadok-bridge-ready", () => {
+    for (const g of groups) if (g.iconDrawn) { g.icon = window.randomGroupIcon(); g.iconDrawn = false; groupIconsMinted = true; }
+    applyView();
   });
 
   /** State line shown while the auto-continue waits for the pace to recover. */
@@ -4224,6 +4625,7 @@
       persistDraft(active);
     }
     active = tab;
+    showTabGroup(tab);
     // A reload must come back to the channel you were watching: remember its
     // sessionId (outside the initial restore, which replays the activates itself).
     if (!restoring && tab.sessionId) localStorage.setItem("cp.activeSession", tab.sessionId);
@@ -6169,8 +6571,9 @@
     }
     $("startBtn").disabled = true;
     closeSetup();
-    // createTab activates the created tab; launchTab opens the link.
-    const t = createTab();
+    // createTab activates the created tab; launchTab opens the link. A new agent
+    // lands in the group on screen — that is what the group's ＋ relies on.
+    const t = createTab(viewGroupId());
     // The name is set BEFORE launchTab, which would otherwise overwrite it with
     // basename(cwd). customName also protects it from `ready` and from the
     // channel restore.
@@ -9325,8 +9728,10 @@
     launchTab(t, { cwd: data.cwd, worktree: true, profile: "Shadok-Tweak" });
   });
   newGroupBtn.addEventListener("click", () => {
-    createGroup();
+    const g = createGroup();
     persistGroups();
+    // A new group is where you are going next: select it (it starts empty).
+    if (railShown()) setView(g.id, { follow: false });
   });
 
   // ── Quota gauges (5h / 7d) ──────────────────────────────

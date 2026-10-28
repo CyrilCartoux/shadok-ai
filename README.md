@@ -76,6 +76,16 @@ Enter to skip; you can add it later from the web UI).
 - **Channels** — one `claude` process each, running in parallel. Renaming,
   grouping, and closing all sync live between the browser and Telegram: it's
   one list, server-owned, not two copies.
+- **Groups column** — on a desktop the groups get a column of their own, left
+  of the agents: pick a group and the agents column shows only its agents (the
+  home agent stays visible in every group; *Ungrouped* holds the rest). Each
+  group has an icon — drawn at random, click it to pick another or type any
+  emoji — and a **＋** that creates the new agent straight into that group.
+  Dragging an agent onto a group still files it there, and dragging groups
+  reorders them. Double-click a name to rename it; **«** folds the column to
+  its icons. A dot on a group you are not looking at says one of its agents
+  is waiting for you, has an unread answer, or is working. On a phone nothing
+  changes: the agents sheet still lists every group.
 - **Worktree isolation** — spawned agents get their own git worktree and branch
   by default, so parallel agents never collide. Work is never auto-discarded:
   an empty worktree is reclaimed on close, anything with changes or commits

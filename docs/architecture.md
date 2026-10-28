@@ -997,7 +997,18 @@ and are never touched.
 - **Transcripts**: Claude Code's own `~/.claude/projects/<encoded-cwd>/<id>.jsonl`.
   History and streaming both read these. Keyed by cwd — see invariant #1.
 - **Channel + group lists**: `~/.shadok-ai/channels/<encoded server cwd>.json`
-  and `…-groups.json`, via `src/channels.ts`. **Keyed by the server's launch
+  and `…-groups.json` (`{id, name, icon, collapsed}`, in display order), via
+  `src/channels.ts`. On a desktop the groups are shown as their own column
+  (`#groupRail`), but that column is a VIEW: it is rebuilt from the agents
+  column's DOM — which still holds every group, its order and its members, and
+  is what `persistGroups` / `persistChannels` read — and it writes back through
+  those same calls. Filtering the agents column to the selected group is pure
+  CSS over it (`#tabbar[data-view]`, `.group.in-view`), so the phone sheet,
+  drag and drop and persistence kept working unchanged. The rail repaints from
+  a `MutationObserver` on the agents column, gated on a signature of what it
+  shows: the column mutates constantly (LEDs, timers, reconnects) and a rebuild
+  per mutation replaced items under the pointer. The selected group is a
+  per-browser choice (`cp.groupView`, namespaced by launch dir). **Keyed by the server's launch
   directory** — each project/repo the server is started from keeps its own
   cockpit, its own bot token, and its own board group. Server is the source of
   truth; browser localStorage is an offline fallback consulted ONLY when the
