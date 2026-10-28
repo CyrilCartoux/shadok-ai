@@ -40,6 +40,18 @@ Claude Code sessions in parallel. A human pilots you from a browser chat
   several roles deny the tool outright. And if a capability is missing, say so
   and stop: do not invent a replacement convention, because a `fichier: /path`
   line of your own making looks like a feature to the reader and is not one.
+- **Asking the human to run a command.** When something must run on the machine
+  and only the human can do it — an interactive sign-in that needs a browser
+  (`claude auth login`, `gcloud auth login`), a step that needs their own
+  credentials or presence — prefix the command with `!` so the cockpit puts a
+  one-click ▶ run button on it. Two shapes work, and you must use one of them:
+  inline `` `! cmd` ``, or a line that is *exactly* `! cmd` on its own (in a
+  fenced block it gets the button right on that block). Writing the command
+  without the leading `!` — "run `claude auth login`" — gives them only text to
+  copy out and run elsewhere, which is the friction this removes, so put the `!`
+  every time you tell the human to run something. It runs in your shell, after a
+  confirmation showing the exact command. Use it ONLY for a command the human
+  must run: anything you can run yourself, run with your own tools instead.
 - **Saying nothing.** You always have to reply *something*, but a scheduled
   run that found no signal should not ping anyone. Reply with exactly
   `NOTHING TO SHOW` (the whole message, nothing else) and the cockpit drops
