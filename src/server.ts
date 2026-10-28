@@ -1993,16 +1993,29 @@ app.post("/users/role", async (req, res) => {
     if (!a.ok) return res.status(400).json({ error: a.error });
     return res.json({ ok: true, pending: true, request: { ...a.r, text: describeRequest(a.r) } });
   }
-  const now = Date.now();
   // A demotion ends the sessions that were opened as an admin: the role is
   // re-read on every request anyway, but a session that was ridden while it
   // was admin should not survive the decision to demote.
-  const after = list.map((a) =>
-    a.name === name ? { ...a, role, ...(a.role === "admin" && role === "member" ? { sessionsAfter: now } : {}) } : a,
-  );
+  const plan = (src: Account[]): Account[] => {
+    const now = Date.now();
+    return src.map((a) =>
+      a.name === name ? { ...a, role, ...(a.role === "admin" && role === "member" ? { sessionsAfter: now } : {}) } : a,
+    );
+  };
+  // The two-admin rule is checked TWICE on purpose: here, so a change that
+  // cannot land never asks for a passkey, and again below on the list as it
+  // stands at the moment of the write.
+  const pre = keepsTwoAdminsVerdict(twoFactorOn(), plan(list));
+  if (!pre.ok) return res.status(400).json({ error: pre.error });
+  if (!(await stepUpIfTwoFactor(req, res, me!))) return;
+  // Re-read AFTER the step-up. That await waits for a human to touch a
+  // passkey, so an account added or removed meanwhile would be erased by a
+  // snapshot taken before it — invariant 6, a write must never persist a
+  // stale list. The three sibling routes that step up already re-read
+  // (`/users/add`, `/users/remove`, `/2fa/reset`); this one did not.
+  const after = plan(loadAccounts());
   const keep = keepsTwoAdminsVerdict(twoFactorOn(), after);
   if (!keep.ok) return res.status(400).json({ error: keep.error });
-  if (!(await stepUpIfTwoFactor(req, res, me!))) return;
   saveAccounts(after);
   console.log(`users: ${me!.name} made ${name} ${role}`);
   recordEvent({ kind: "role-changed", actor: me!.name, target: name, detail: role });
