@@ -836,6 +836,10 @@
   .fold > summary:hover { color: var(--text); }
   .fold > *:not(summary) { margin-top: 8px; }
   .fold-count { color: var(--amber); }
+  .tg-guide { margin-bottom: 12px; }
+  .tg-guide ol { margin: 8px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.5; }
+  .tg-guide li { margin-bottom: 4px; }
+  .tg-guide code { font-size: 12px; }
   /* A field with no effect in the current mode (resume/continue) — visible but inert. */
   .na { opacity: .45; pointer-events: none; }
 
@@ -2354,6 +2358,18 @@
       <p class="sec-note" id="tgStatus">…</p>
     </div>
     <div class="pin-body">
+    <details class="fold tg-guide" id="tgGuide">
+      <summary>How to set it up, step by step</summary>
+      <ol>
+        <li>In Telegram, open <b>@BotFather</b>, send <code>/newbot</code>, pick a name and a username ending in <code>bot</code>. It answers with a <b>token</b>.</li>
+        <li>Paste that token below and click <b>Save</b>. The status above turns 🟢 with the bot's name.</li>
+        <li>Create a Telegram <b>group</b>, open its settings and turn on <b>Topics</b>.</li>
+        <li>Add your bot to the group and make it an <b>admin</b> with <i>Manage topics</i> (and <i>Delete messages</i>, so <code>/secret</code> can scrub values).</li>
+        <li>In the group, send <code>/setup</code>. The status above now shows the bound group.</li>
+        <li>Send <code>/spawn &lt;name&gt;</code> (or create a topic by hand): each topic is one agent, also visible here as a tab.</li>
+      </ol>
+      <p class="check-hint">Optional: list chat ids under <i>Allowed chats</i> so only they can reach the bot.</p>
+    </details>
     <button id="tgUnbind" hidden title="Unbind the board group so you can /setup a fresh one (e.g. after it became a supergroup)">Unbind group</button>
     <label class="check"><input type="checkbox" id="tgEnabled"><span>Bot enabled</span></label>
     <div class="field">
@@ -8960,6 +8976,13 @@
     const err = s.tokenError ? ` — ${s.tokenError}` : "";
     $("tgStatus").textContent = `${dot} ${who}${grp}${err}`;
     $("tgUnbind").hidden = !s.boundGroup; // only offer unbind when a group is bound
+    // The guide unfolds on its own until the setup is done (token + bound group);
+    // once it is, it stays folded unless opened — decided once per opening of
+    // the panel, so saving a token never folds a guide the user is reading.
+    if (!$("tgGuide").dataset.auto) {
+      $("tgGuide").open = !(s.hasToken && s.boundGroup);
+      $("tgGuide").dataset.auto = "1";
+    }
     $("tgEnabled").checked = s.enabled;
     const tok = $("tgToken");
     tok.disabled = s.envOverride;
@@ -8977,6 +9000,7 @@
     }
   }
   async function loadTelegram() {
+    delete $("tgGuide").dataset.auto; // each opening of the panel re-decides the fold
     renderTelegram(await (await fetch("/telegram")).json());
   }
   async function putTelegram(patch) {
