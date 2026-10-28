@@ -900,6 +900,23 @@
   }
   .turn .copy:hover, .turn .copy:focus-visible { opacity: 1; color: var(--amber); border-color: var(--amber); }
   .turn .copy.done { opacity: 1; color: var(--ok, #7ac77a); border-color: currentColor; }
+  /* The link button sits beside copy, same look. */
+  .turn .msg-tools { align-self: flex-end; display: flex; gap: 6px; }
+  .turn .msg-tools .copy { align-self: auto; }
+  /* The message a link pointed at. */
+  .turn.msg-flash > .bubble { animation: msgFlash 2.4s ease-out; }
+  @keyframes msgFlash {
+    0%, 40% { box-shadow: 0 0 0 2px var(--amber); }
+    100% { box-shadow: 0 0 0 2px transparent; }
+  }
+  #deepLinkNote {
+    position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 60;
+    max-width: min(92vw, 520px); padding: 8px 12px; border-radius: 8px;
+    background: var(--bg-inset); border: 1px solid var(--amber); color: var(--text);
+    font-size: 13px; display: flex; gap: 10px; align-items: center;
+  }
+  #deepLinkNote[hidden] { display: none; }
+  #deepLinkNote button { background: none; border: 0; color: var(--text-dim); cursor: pointer; font-size: 14px; }
   /* An activity block sits closer to the text it belongs to than to the next turn. */
   .turn.activity { margin-top: 5px; }
   .turn.activity + .turn.claude { margin-top: 5px; }
@@ -2568,6 +2585,10 @@
   window.blockCommand = blockCommand;
   import { claudeUpdateState } from "/update-ready.js?v=__ASSET_V__";
   window.claudeUpdateState = claudeUpdateState;
+  import { buildMessageLink, parseMessageLink, samePrompt } from "/deep-link.js?v=__ASSET_V__";
+  window.buildMessageLink = buildMessageLink;
+  window.parseMessageLink = parseMessageLink;
+  window.samePrompt = samePrompt;
   import { uploadFailure } from "/upload.js?v=__ASSET_V__";
   window.uploadFailure = uploadFailure;
   import { fmtExpiry, expiryWarning } from "/auth-expiry.js?v=__ASSET_V__";
@@ -2693,6 +2714,11 @@
     // after the /auth fetch), and the re-login reminder never nags blind.
     fmtExpiry: () => "—",
     expiryWarning: () => null,
+    // No module → no link button, and a link opened before it lands is read
+    // again on `shadok-bridge-ready`.
+    buildMessageLink: () => null,
+    parseMessageLink: () => null,
+    samePrompt: () => false,
     uploadFailure: (status, contentType) =>
       /json/i.test(contentType || "") ? null : status === 413 ? "too large (over the server's upload limit)" : `upload failed (HTTP ${status || "?"})`,
   };
@@ -4881,6 +4907,115 @@
     turn.appendChild(b);
   }
 
+  /**
+   * Give a bubble its transcript ids and a "link" button. The link names the
+   * FIRST id; the lookup is by membership (`[data-msg-ids~=…]`), because live
+   * every text block is its own bubble while the replay merges them — so a link
+   * made on either side finds its message on the other.
+   */
+  function stampMsgIds(tab, turn, ids) {
+    if (!turn || !Array.isArray(ids) || !ids.length || turn.dataset.msgIds) return;
+    turn.dataset.msgIds = ids.join(" ");
+    turn.classList.remove("await-id");
+    const copy = turn.querySelector(":scope > .copy");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "copy link";
+    b.textContent = "🔗 link";
+    b.title = "Copy a link to this message (for someone with access to this cockpit)";
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const url = window.buildMessageLink(location.origin + location.pathname, tab.sessionId, ids[0]);
+      const ok = !!url && (await copyText(url));
+      b.textContent = ok ? "✓ link copied" : "⚠ failed";
+      b.classList.toggle("done", ok);
+      setTimeout(() => { b.textContent = "🔗 link"; b.classList.remove("done"); }, 1500);
+    });
+    if (copy) {
+      const row = document.createElement("div");
+      row.className = "msg-tools";
+      copy.replaceWith(row);
+      row.append(b, copy);
+    } else turn.appendChild(b);
+    // A link opened before this message arrived is waiting for it.
+    if (pendingDeepLink && pendingDeepLink.tab === tab && ids.includes(pendingDeepLink.msg)) followDeepLink();
+  }
+
+  /** A prompt bubble shown before the transcript had it: it learns its id from
+   *  `prompt-id`, matched on its words. */
+  function awaitPromptId(bubble, text) {
+    const turn = bubble.parentElement;
+    turn.classList.add("await-id");
+    turn._promptText = text;
+  }
+
+  // ── Opening a link to a message (#agent=<session>&msg=<uuid>) ─────────────
+  let pendingDeepLink = null; // { tab, msg, until }
+  let deepLinkTimer = null;
+  function deepLinkNote(text) {
+    let el = document.getElementById("deepLinkNote");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "deepLinkNote";
+      el.setAttribute("role", "status");
+      const span = document.createElement("span");
+      const x = document.createElement("button");
+      x.type = "button";
+      x.textContent = "✕";
+      x.title = "Dismiss";
+      x.addEventListener("click", () => { el.hidden = true; });
+      el.append(span, x);
+      document.body.appendChild(el);
+    }
+    el.firstChild.textContent = text;
+    el.hidden = false;
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.hidden = true; }, 10000);
+  }
+  function clearDeepLinkHash() {
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  }
+  /** Read the hash and go there; called at boot, on hashchange, and whenever a
+   *  bubble or history may have brought the message in. */
+  function followDeepLink() {
+    clearTimeout(deepLinkTimer);
+    if (!pendingDeepLink) {
+      const link = window.parseMessageLink(location.hash);
+      if (!link) return;
+      if (restoring) { deepLinkTimer = setTimeout(followDeepLink, 200); return; }
+      const tab = tabs.find((t) => t.sessionId === link.agent);
+      if (!tab) {
+        clearDeepLinkHash();
+        deepLinkNote("This link points to an agent that is not on this cockpit (closed, or another instance).");
+        return;
+      }
+      pendingDeepLink = { tab, msg: link.msg, until: Date.now() + 20000 };
+      if (active !== tab) activate(tab);
+    }
+    const { tab, msg, until } = pendingDeepLink;
+    const el = tab.transcriptEl.querySelector(`[data-msg-ids~="${msg}"]`);
+    if (el) {
+      pendingDeepLink = null;
+      clearDeepLinkHash();
+      if (active !== tab) activate(tab);
+      tab.transcriptEl._stickBottom = false;
+      el.scrollIntoView({ block: "center" });
+      el.classList.remove("msg-flash");
+      void el.offsetWidth; // restart the animation on a second visit
+      el.classList.add("msg-flash");
+      return;
+    }
+    if (Date.now() > until) {
+      pendingDeepLink = null;
+      clearDeepLinkHash();
+      deepLinkNote("This message is older than the history shown for this agent.");
+      return;
+    }
+    deepLinkTimer = setTimeout(followDeepLink, 300);
+  }
+  window.addEventListener("hashchange", () => { pendingDeepLink = null; followDeepLink(); });
+  window.addEventListener("shadok-bridge-ready", () => { if (!pendingDeepLink) followDeepLink(); });
+
   /** The author label of a prompt that came from elsewhere — the decision lives
    *  in /echo-author.js (pure, tested). Guarded on `window`: the ESM bridge runs
    *  AFTER the document is parsed (invariant 10). */
@@ -6365,10 +6500,12 @@
             // Who sent it, recovered from the stripped ⟦…⟧ header, through the
             // SAME echoAuthor the live echo uses: "Ada · telegram"
             // for a Telegram message, "you" for your own web prompt.
-            addTurn(t, "user", echoAuthorLabel({ from: h.from, origin: h.origin }), h.text, "hist", h.at);
+            const b = addTurn(t, "user", echoAuthorLabel({ from: h.from, origin: h.origin }), h.text, "hist", h.at);
+            stampMsgIds(t, b.parentElement, h.ids);
           } else {
             const b = addTurn(t, "claude", "claude", h.text, "hist", h.at);
             decorateBang(t, b, h.text);
+            stampMsgIds(t, b.parentElement, h.ids);
             // A hidden prompt (cron / notification) ran before this turn: keep
             // its own label instead of merging it onto the previous answer
             // (same `.after-gap` boundary the live stream uses).
@@ -6477,6 +6614,7 @@
         closeActivity(t);
         {
           const b = addTurn(t, "user", echoAuthorLabel(msg), msg.text, null, Date.now());
+          awaitPromptId(b, msg.text);
           markUnreadBoundary(t, b.parentElement);
         }
         if (t === active) updateJumpButton();
@@ -6506,6 +6644,13 @@
       case "context":
         t.contextPct = msg.pct;
         renderContext(t);
+        break;
+      case "prompt-id":
+        // The transcript now holds a prompt this tab showed early: give the
+        // matching bubble its id (oldest first — prompts are written in order).
+        for (const el of t.transcriptEl.querySelectorAll(".turn.await-id")) {
+          if (window.samePrompt(el._promptText, msg.text)) { stampMsgIds(t, el, [msg.msgId]); break; }
+        }
         break;
       case "stream-bash":
         // A shell-mode exchange, from the transcript like every other content.
@@ -6548,6 +6693,7 @@
           // spares `.after-gap`).
           if (msg.afterInternal) b.parentElement.classList.add("after-gap");
           decorateBang(t, b, msg.text);
+          if (msg.msgId) stampMsgIds(t, b.parentElement, [msg.msgId]);
           markUnreadBoundary(t, b.parentElement);
         }
         if (t === active) updateJumpButton();
@@ -6917,7 +7063,7 @@
     // Sending = going back to the bottom, whatever happens (even after scrolling
     // up): you want to see your message and the answer that follows.
     t.transcriptEl._stickBottom = true;
-    addTurn(t, "user", "you", text, null, Date.now());
+    awaitPromptId(addTurn(t, "user", "you", text, null, Date.now()), text);
     startTurnTimer(t);
     setTabMood(t, "working");
     // Remember this channel's last sent prompt, so Escape (an interruption) can
@@ -9278,7 +9424,8 @@
         });
       }
       // Come back to the channel active before the reload (fallback: the first).
-      const savedActive = localStorage.getItem("cp.activeSession");
+      // A link to a message names its agent: open THAT one first.
+      const savedActive = window.parseMessageLink(location.hash)?.agent || localStorage.getItem("cp.activeSession");
       let targetIdx = pending.findIndex((p) => p.t.sessionId === savedActive);
       if (targetIdx < 0) targetIdx = 0;
       activate(pending[targetIdx].t);
@@ -9309,6 +9456,7 @@
     // Only now: `syncChannels` is a no-op while `restoring`, so kicking the loop
     // off any earlier would leave the first EFFECTIVE pass a full period away —
     // which is the four-second blank this whole change is about.
+    followDeepLink();
     syncLoop();
   })();
 </script>

@@ -4,10 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { newestTranscriptById, isNothingToShow, parseTimestamp } from "./tail.js";
 import { toolFiles, fileCard } from "./download.js";
-import { isCronPrompt } from "./crons.js";
-import { isAgentPrompt } from "./kinship.js";
-import { stripPromptMeta, parsePromptMeta } from "./promptmeta.js";
-import { stripLedgerBlock } from "./ledger.js";
+import { userPromptText, classifyUserLine } from "./prompt-kind.js";
 
 /**
  * Extracts the response: everything after the "❯ <prompt>" echo in the
@@ -289,38 +286,7 @@ function dialogBody(region: string[], width: number): string {
   return out.join("\n");
 }
 
-/**
- * The text of a transcript line IF it is a real human prompt, else null.
- *
- * A `type: "user"` line is not necessarily someone speaking: Claude Code also
- * writes tool results, system reminders (`<…>`) and interruptions there. The
- * rule was copied verbatim into `loadHistory` and `sessionPreview`; it lives
- * here so a third caller cannot re-derive it slightly wrong (one of them counts
- * turns, the other dated turns).
- */
-export function userPromptText(e: any): string | null {
-  if (!e || e.isMeta || e.type !== "user" || !e.message) return null;
-  const c = e.message.content;
-  let text = "";
-  if (typeof c === "string") text = c;
-  else if (Array.isArray(c))
-    text = c
-      .filter((b: any) => b.type === "text")
-      .map((b: any) => b.text)
-      .join("\n");
-  text = text.trim();
-  // Claude Code wraps a LARGE pasted prompt as `<pasted_content id="…">…
-  // </pasted_content>` in the transcript. The server-prepended ledger delta
-  // (now on by default) routinely pushes an ordinary prompt over that paste
-  // threshold, so the recorded message starts with `<pasted_content` — and the
-  // bare `<`-guard below then dropped the WHOLE turn from the web history even
-  // though the agent had answered it. Peel the wrapper tags (open + close, with
-  // or without the echoed id) and keep the inner text; the ledger/meta headers
-  // it now exposes are stripped downstream by loadHistory as usual.
-  text = text.replace(/<\/?pasted_content(?:\s[^>]*)?>/g, "").trim();
-  if (!text || text.startsWith("<") || text.startsWith("[Request interrupted")) return null;
-  return text;
-}
+export { userPromptText } from "./prompt-kind.js";
 
 export interface HistoryTurn {
   role: "user" | "assistant" | "file" | "bash";
@@ -364,6 +330,13 @@ export interface HistoryTurn {
    * folds it into a collapsible box instead of a full-width bubble.
    */
   compaction?: true;
+  /**
+   * The transcript `uuid` of every line folded into this turn, first one first.
+   * A link to a message names ONE uuid; live, each text block is its own bubble,
+   * while the replay merges consecutive blocks — so the client looks a link up
+   * by membership (`[data-msg-ids~=…]`), which finds it whichever side made it.
+   */
+  ids?: string[];
 }
 
 /**
@@ -407,6 +380,7 @@ export function loadHistory(cwd: string, sessionId: string): HistoryTurn[] {
     if (e.isMeta || !e.message) continue;
     const at = parseTimestamp(e.timestamp);
     const when = at === null ? {} : { at };
+    const ids = typeof e.uuid === "string" ? { ids: [e.uuid] } : {};
     if (e.type === "user") {
       // A shell-mode exchange BEFORE the `<` guard below, which took it for an
       // injected system block and dropped it — the command vanished on reload
@@ -423,41 +397,20 @@ export function loadHistory(cwd: string, sessionId: string): HistoryTurn[] {
         pendingHiddenPrompt = false;
         continue;
       }
-      const text = userPromptText(e);
-      if (text === null) continue; // tool result, system reminder, interruption
-      // A compaction summary is a (large) USER message Claude Code writes itself
-      // on /compact or an auto-compaction. Keep it — it is real history — but
-      // flag it so the client can fold it away instead of flooding the chat.
-      if (e.isCompactSummary) {
-        turns.push({ role: "user", text, compaction: true, ...when });
-        pendingHiddenPrompt = false;
-        continue;
-      }
-      // A pushed ledger delta may ride ahead of ANY prompt — human, cron, or an
-      // agent notification — so strip it BEFORE classifying: otherwise a cron /
-      // agent prompt no longer starts with its hiding mark and would leak into
-      // the display.
-      const bare = stripLedgerBlock(text);
+      const line = classifyUserLine(e);
+      if (line.kind === "none") continue; // tool result, system reminder, interruption
       // Machine-written user messages: a scheduled prompt and a notification
       // about a child agent. Neither is shown live, so neither may come back on
       // a reload or a topic backfill — but a dropped one still BROKE the turn,
       // so remember it to keep the next answer from merging onto the last.
-      if (isCronPrompt(bare) || isAgentPrompt(bare)) {
+      if (line.kind === "hidden") {
         pendingHiddenPrompt = true;
         continue;
       }
-      // A human prompt may still open with a context header (⟦platform · time ·
-      // who⟧) the agent was given; strip it for display — leaving the message —
-      // but FIRST recover who spoke, so a replayed Telegram message shows its
-      // sender instead of the generic "pilot".
-      const meta = parsePromptMeta(bare);
-      turns.push({
-        role: "user",
-        text: stripPromptMeta(bare),
-        ...(meta?.who ? { from: meta.who } : {}),
-        ...(meta?.platform ? { origin: meta.platform } : {}),
-        ...when,
-      });
+      // A compaction summary is kept — it is real history — but flagged so the
+      // client can fold it away instead of flooding the chat.
+      if (line.kind === "compaction") turns.push({ role: "user", text: line.text, compaction: true, ...when });
+      else turns.push({ role: "user", text: line.text, ...(line.from ? { from: line.from } : {}), ...(line.origin ? { origin: line.origin } : {}), ...ids, ...when });
       pendingHiddenPrompt = false;
     } else if (e.type === "assistant" && Array.isArray(e.message.content)) {
       // A SendUserFile delivered files → a `file` turn survives the reload (the
@@ -483,8 +436,10 @@ export function loadHistory(cwd: string, sessionId: string): HistoryTurn[] {
       // which is when the speaking started (and that is where the client shows
       // the group label). But a hidden prompt in between makes this a NEW turn:
       // don't merge, and flag it so the client keeps its own label.
-      if (last && last.role === "assistant" && !pendingHiddenPrompt) last.text += "\n\n" + text;
-      else turns.push({ role: "assistant", text, ...(pendingHiddenPrompt ? { afterInternal: true } : {}), ...when });
+      if (last && last.role === "assistant" && !pendingHiddenPrompt) {
+        last.text += "\n\n" + text;
+        if (ids.ids) (last.ids ??= []).push(...ids.ids);
+      } else turns.push({ role: "assistant", text, ...(pendingHiddenPrompt ? { afterInternal: true } : {}), ...ids, ...when });
       pendingHiddenPrompt = false;
     }
   }

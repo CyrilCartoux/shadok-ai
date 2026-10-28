@@ -156,6 +156,19 @@ classify the refusal without pattern-matching the message text. And
 read it, so a client dates history correctly instead of stamping everything with
 the moment it reconnected.
 
+Messages also carry their transcript **uuid**, which is what a link to a message
+(`#agent=<session>&msg=<uuid>`, `public/deep-link.js`) names. `stream-text`
+carries it as `msgId`; a replayed `HistoryTurn` carries `ids`, every uuid folded
+into it, because the replay merges consecutive text blocks that arrived live as
+separate bubbles — the client looks a link up by membership
+(`[data-msg-ids~=…]`), so a link made on either side resolves on the other. A
+human prompt is the odd one: the server echoes it before the transcript has it,
+so the tail emits a `prompt` event once the line is written and the server
+broadcasts `prompt-id { msgId, text }`; the client stamps the echoed bubble that
+shows the SAME words (a prompt typed in the terminal view has no bubble and must
+not lend its id to the next one). Which user lines count is `classifyUserLine`
+(`src/prompt-kind.ts`), shared with `loadHistory` so the two cannot drift.
+
 ## Where a session lives (`src/channels.ts`)
 
 `loadHistory` is keyed by the working directory — the transcript sits at
