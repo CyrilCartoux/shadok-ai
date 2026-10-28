@@ -121,7 +121,7 @@ Enter to skip; you can add it later from the web UI).
   the token itself; the short-lived access token refreshes on its own, so the
   figure shown is the session deadline, not that rotation. A **↻ Re-login to
   Claude** button right there signs you in again without waiting for the lapse,
-  and in the last **24 hours** (or once it has lapsed) a reminder **banner**
+  and in the last **48 hours** (or once it has lapsed) a reminder **banner**
   carries the same one-click re-login — so your agents never quietly start
   hitting `401` because nobody renewed the session.
 - **Secret vault** — stored under `~/.shadok-ai`, never in your repo, injected

@@ -19,7 +19,7 @@ test("expiryWarning: a healthy signed-in session well inside its window → no n
   assert.equal(expiryWarning(auth, NOW), null);
 });
 
-test("expiryWarning: within 24h → nags, carrying the countdown wording", () => {
+test("expiryWarning: within the window → nags, carrying the countdown wording", () => {
   const auth = { state: "signed-in", loggedIn: true, tokenExpiresAt: NOW + h(18) };
   const w = expiryWarning(auth, NOW);
   assert.ok(w);
@@ -29,7 +29,14 @@ test("expiryWarning: within 24h → nags, carrying the countdown wording", () =>
   assert.match(w!.text, /re-login/i);
 });
 
-test("expiryWarning: exactly at the 24h threshold does not nag yet (strictly inside)", () => {
+test("expiryWarning: the window is 48h — 36h out nags, 50h out stays quiet", () => {
+  assert.equal(EXPIRY_WARN_MS, d(2)); // the threshold IS two days
+  const at = (hrs: number) => ({ state: "signed-in", loggedIn: true, tokenExpiresAt: NOW + h(hrs) });
+  assert.ok(expiryWarning(at(36), NOW), "36h before the deadline must nag now");
+  assert.equal(expiryWarning(at(50), NOW), null, "50h out is still outside the window");
+});
+
+test("expiryWarning: exactly at the 48h threshold does not nag yet (strictly inside)", () => {
   const auth = { state: "signed-in", loggedIn: true, tokenExpiresAt: NOW + EXPIRY_WARN_MS };
   assert.equal(expiryWarning(auth, NOW), null);
   // One millisecond closer and it does.

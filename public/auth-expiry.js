@@ -9,8 +9,8 @@
 // token (`accessExpiresAt`, ~6h) rotates on its own and is never what we warn
 // about; see src/claude-creds.ts.
 
-/** 24h before the deadline: when the cockpit starts nagging to re-login. */
-export const EXPIRY_WARN_MS = 24 * 60 * 60 * 1000;
+/** 48h before the deadline: when the cockpit starts nagging to re-login. */
+export const EXPIRY_WARN_MS = 48 * 60 * 60 * 1000;
 
 /** A future instant as "in 22 days" / "in 6 h" / "in 40 min" / "expired". */
 export function fmtExpiry(ts, now = Date.now()) {
@@ -31,7 +31,7 @@ export function fmtExpiry(ts, now = Date.now()) {
  *    not a reason to alarm) and never `signed-out` (the sign-in card owns that);
  *  - only when the re-login deadline is actually a number (an env-token
  *    instance carries none, so it is never nagged);
- *  - within 24h, INCLUDING already past it — a tab left open across the
+ *  - within 48h, INCLUDING already past it — a tab left open across the
  *    deadline must still nag, not fall silent.
  *
  * @param {{state?: string, loggedIn?: boolean, tokenExpiresAt?: number}|null} auth
