@@ -707,8 +707,8 @@
      agents column keeps its DOM (groups, bodies, tabs) because that is what is
      persisted, so the filtering below is pure CSS over it: group heads go (the
      rail is the header now), bodies are always unfolded, and every tab outside
-     the selected group is hidden — except the home agent, which stays reachable
-     whatever is selected. Phones (≤640px) keep the single-column sheet. */
+     the selected group is hidden, the home agent included (it lives in its own
+     group like any other). Phones (≤640px) keep the single-column sheet. */
   #groupRail { display: none; }
   .icon-picker[hidden] { display: none; }
   @media (min-width: 641px) {
@@ -781,11 +781,11 @@
     #tabbar .group { margin-top: 0; }
     #tabbar .group-body { padding-left: 0; }
     #tabbar .group.collapsed .group-body { display: flex; }
-    #tabbar:not([data-view="ungrouped"]) #ungrouped .tab:not(.main-tab),
-    #tabbar[data-view="ungrouped"] #groups .tab:not(.main-tab),
-    #tabbar .group:not(.in-view) .tab:not(.main-tab) { display: none; }
-    #tabbar:not([data-view="ungrouped"]) #ungrouped:not(:has(.main-tab)),
-    #tabbar .group:not(.in-view):not(:has(.main-tab)) { display: none; }
+    /* The home agent is an agent like the others here: it shows in ITS group
+       (usually Ungrouped), not pinned into every one. */
+    #tabbar:not([data-view="ungrouped"]) #ungrouped,
+    #tabbar[data-view="ungrouped"] #groups,
+    #tabbar .group:not(.in-view) { display: none; }
   }
   @media (max-width: 640px) {
     #tabbar .side-label .sl-view, #viewEmpty { display: none; }
@@ -4159,16 +4159,14 @@
     applyView();
     // Picking a group shows one of ITS agents: staying on an agent that is no
     // longer in the list would leave the chat and the list disagreeing.
-    // The home agent is visible in every group, but picking a group still means
-    // "show me that group": it opens one of the group's own agents.
-    if (follow && active && !active.btnEl.closest("#tweakSlot") && (active.isMain || viewOfTab(active) !== currentView())) {
-      const first = tabsInView(currentView()).find((t) => !t.isMain);
+    if (follow && active && !active.btnEl.closest("#tweakSlot") && viewOfTab(active) !== currentView()) {
+      const first = tabsInView(currentView())[0];
       if (first) activate(first);
     }
   }
   /** Whatever opens an agent (a click, a link, a notification) brings its group. */
   function showTabGroup(tab) {
-    if (!tab || tab.isMain || tab.btnEl.closest("#tweakSlot")) return;
+    if (!tab || tab.btnEl.closest("#tweakSlot")) return;
     const v = viewOfTab(tab);
     if (v !== currentView()) setView(v, { follow: false });
   }
@@ -4179,7 +4177,7 @@
     for (const g of groups) g.el.classList.toggle("in-view", String(g.id) === v);
     const g = groups.find((x) => String(x.id) === v);
     $("viewLabel").textContent = g ? `${g.icon} ${g.nameEl.textContent}` : "Ungrouped";
-    $("viewEmpty").hidden = tabsInView(v).some((t) => !t.isMain) || v === "ungrouped";
+    $("viewEmpty").hidden = tabsInView(v).length > 0 || v === "ungrouped";
     renderRail();
   }
 
@@ -4196,7 +4194,7 @@
   let lastIconClick = { view: null, t: 0 };
 
   function railItem({ view, icon, name, group }) {
-    const members = tabsInView(view).filter((t) => !t.isMain);
+    const members = tabsInView(view);
     const item = document.createElement("div");
     item.className = "rail-item" + (group ? " editable" : "");
     item.dataset.view = view;
@@ -4321,7 +4319,7 @@
     // replaced under the pointer.
     const v = currentView();
     const sig = v + "|" + entries.map((e) => {
-      const members = tabsInView(e.view).filter((t) => !t.isMain);
+      const members = tabsInView(e.view);
       return [e.view, e.icon, e.name, members.length, members.map(moodOf).join(",")].join("/");
     }).join("|");
     if (sig !== railSig) {
