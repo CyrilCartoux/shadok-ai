@@ -9081,6 +9081,7 @@
   // The button only exists for an admin. Hiding it is a courtesy: the server
   // refuses a member's write regardless, which is where the rule actually lives.
   let me = null;
+  let tfaEnabled = false; // read from GET /2fa when the Users panel renders
   async function loadMe() {
     try { me = await (await fetch("/me")).json(); } catch { me = null; }
     const b = $("usersBtn");
@@ -9137,17 +9138,14 @@
       const flip = document.createElement("button");
       flip.textContent = u.role === "admin" ? "make member" : "make admin";
       flip.addEventListener("click", async () => {
-        await fetch("/users/role", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: u.name, role: u.role === "admin" ? "member" : "admin" }),
-        });
+        await adminWrite("/users/role", "POST", { name: u.name, role: u.role === "admin" ? "member" : "admin" });
         renderUsers();
       });
       const del = document.createElement("button");
       del.textContent = "delete"; del.style.color = "#e26";
       del.addEventListener("click", async () => {
         if (!confirm("Remove " + u.name + "?\n\nTheir open sessions stop working immediately.")) return;
-        await fetch("/users?name=" + encodeURIComponent(u.name), { method: "DELETE" });
+        await adminWrite("/users?name=" + encodeURIComponent(u.name), "DELETE", {});
         renderUsers();
       });
       btns.className = "u-actions";
@@ -9180,7 +9178,7 @@
   /** The link is the only way in and it is shown once, so it gets a block of
    *  its own: readable, selectable, and copyable without aiming at wrapped text. */
   function showInvite(name, url) {
-    $("inviteWho").textContent = "Invitation for " + name + " — valid 7 days";
+    $("inviteWho").textContent = "Invitation for " + name + " — valid 48 hours";
     $("inviteUrl").textContent = url;
     $("inviteCopy").textContent = "Copy";
     $("inviteBox").hidden = false;
@@ -9229,6 +9227,23 @@
       return { challengeId: o.j.challengeId, assertion };
     } catch (err) { tfaError("Passkey cancelled: " + (err?.message || err)); return null; }
   }
+  /**
+   * An account write by an admin — invite, delete, change a role. With
+   * two-factor on, the server wants a FRESH passkey confirmation for each, so
+   * it is asked for here first. Returns the JSON answer, or null after saying
+   * why (alert: these buttons sit outside the two-factor box's error line).
+   */
+  async function adminWrite(url, method, body) {
+    let extra = {};
+    if (tfaEnabled) {
+      extra = await confirmPasskey();
+      if (!extra) { alert($("tfaErr").textContent || "Passkey confirmation needed."); return null; }
+    }
+    const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, ...extra }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(out.error || "refused"); return null; }
+    return out;
+  }
   /** POST, with a passkey confirmation first when `stepUp`. Shows the refusal. */
   async function tfaPost(url, body, stepUp) {
     tfaError("");
@@ -9256,6 +9271,7 @@
     $("tfaBox").hidden = !st;
     if (!st) return;
     $("tfaState").textContent = st.enabled ? "on" : "off";
+    tfaEnabled = !!st.enabled;
     const admin = me?.role === "admin";
     const t = $("tfaToggle");
     t.hidden = !admin || !st.named;
@@ -9328,12 +9344,8 @@
     e.preventDefault();
     const name = $("userName").value.trim();
     if (!name) return;
-    const r = await fetch("/users", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, role: $("userRole").value }),
-    });
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok) { alert(out.error || "failed"); return; }
+    const out = await adminWrite("/users", "POST", { name, role: $("userRole").value });
+    if (!out) return;
     // The link is the ONLY way in, and it is shown once. It stays on screen
     // until the panel is reopened rather than flashing past in a toast.
     showInvite(name, location.origin + out.inviteUrl);

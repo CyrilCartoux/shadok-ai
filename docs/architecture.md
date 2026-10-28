@@ -833,7 +833,17 @@ Design and threat model: `docs/superpowers/specs/2026-10-21-passkey-2fa-design.m
   and a redeemed invitation, which vouches the same way).
 - **Actions that could undo the second factor for someone** — reset, a code for
   another person, switching 2FA on/off, removing another's passkey — require a
-  FRESH passkey assertion from the actor (`stepUpOk`), not just a session.
+  FRESH passkey assertion from the actor (`stepUpOk`), not just a session. So
+  do the plain account writes while 2FA is on — inviting, deleting an account,
+  changing a role (`stepUpIfTwoFactor`): a ridden admin session could otherwise
+  invite an accomplice as admin.
+- **A reset ends the sessions opened before it.** The cookie carries its issue
+  time; `Account.sessionsAfter` refuses any older one (`sessionAlive`, read in
+  `cookieAccount`). Set by a reset, a removed passkey (usually a lost device,
+  which may still be signed in — the person removing their own gets a fresh
+  cookie) and a demotion. Redeeming the reset link keeps it, or the new
+  password would bring a stolen pre-reset session back. Invitations last 48 h.
+  Design of the rest of v2: `docs/superpowers/specs/2026-10-28-2fa-v2-recovery-design.md`.
 - **Only a person manages accounts while it is on**: `accountAdmin` and the
   `/2fa/*` routes read `cookieAccount`, which never accepts an agent's session
   key or a peer. The key IS the bootstrap admin; without this an agent could

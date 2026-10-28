@@ -389,7 +389,7 @@ know before opening it up:
 - **That password is the `admin` account.** With it set, the login page gains a
   user field — leave it blank to sign in as the admin. An admin can then invite
   other people from the **Users** panel: each invitation is a single-use link,
-  valid 7 days, on which the invitee chooses their own password, so the admin
+  valid 48 hours, on which the invitee chooses their own password, so the admin
   never learns it — and redeeming the link signs them in straight away. The ⋯
   menu names who you are and lets you sign out. Two roles: `admin` manages
   accounts, `member` does everything
@@ -415,7 +415,11 @@ know before opening it up:
     row (confirming with their own passkey). Your password and every passkey are
     removed and they hand you a fresh invitation link, on which you choose a new
     password and register the device you have. Nobody can reset themselves. An
-    admin can also hand a member a *device code* directly.
+    admin can also hand a member a *device code* directly. Every session opened
+    before the reset stops working — including one on the lost device; removing
+    a passkey or demoting an admin does the same.
+  - While it is on, inviting, deleting an account and changing a role also ask
+    the admin for their passkey.
   - While it is on, the instance password (`admin`) **cannot sign in to the
     browser** — it lives in every agent's environment and no one could reset it;
     use a named account. Agents, Telegram and peers keep working (they never use

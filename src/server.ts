@@ -207,6 +207,7 @@ import {
   sessionSecret,
   signSession,
   readSessionFull,
+  sessionAlive,
   saveAccounts,
   userWriteVerdict,
   newInvite,
@@ -850,7 +851,7 @@ function cookieToken(cookieHeader: string | undefined): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 /** The session a request's cookie carries, verified, or null. */
-function cookieSession(req: { headers: Record<string, unknown> }): { user: string; mfa: boolean } | null {
+function cookieSession(req: { headers: Record<string, unknown> }): { user: string; mfa: boolean; issuedAt: number } | null {
   const tok = cookieToken(req.headers.cookie as string | undefined);
   return tok ? readSessionFull(tok, signingSecret(), Date.now(), SESSION_TTL_MS) : null;
 }
@@ -916,6 +917,8 @@ function cookieAccount(req: { headers: Record<string, unknown> }): { name: strin
   const acct = loadAccounts().find((a) => a.name === sess.user);
   // No hash means an invitation that was never redeemed: not a login yet.
   if (!acct?.passwordHash) return null;
+  // Opened before the account's access was reset: dead, whoever holds it.
+  if (!sessionAlive(sess.issuedAt, acct)) return null;
   return { name: acct.name, role: acct.role };
 }
 
@@ -956,6 +959,16 @@ function updateAccount(name: string, f: (a: Account) => Account): void {
  * off): a session can be ridden by a forged request, a biometric cannot.
  * Answers the refusal itself and returns false.
  */
+/**
+ * The fresh confirmation, for the admin writes that were plain session writes
+ * in v1 — inviting, deleting an account, changing a role. Only while 2FA is on:
+ * with it off nobody has to own a passkey, and asking for one would lock the
+ * very setup that leads to switching it on.
+ */
+async function stepUpIfTwoFactor(req: express.Request, res: express.Response, me: { name: string }): Promise<boolean> {
+  return !twoFactorOn() || stepUpOk(req, res, me);
+}
+
 async function stepUpOk(req: express.Request, res: express.Response, me: { name: string }): Promise<boolean> {
   const rp = rpFor(req);
   const acct = loadAccounts().find((a) => a.name === me.name);
@@ -1321,6 +1334,9 @@ app.post("/invite/:token", (req, res) => {
             createdAt: a.createdAt,
             passwordHash: hashPassword(password),
             ...(a.passkeys?.length ? { passkeys: a.passkeys } : {}),
+            // Kept: dropping it would bring a session from before the reset
+            // back to life the moment the new password is set.
+            ...(a.sessionsAfter ? { sessionsAfter: a.sessionsAfter } : {}),
             ...(enroll ? { enroll } : {}),
           }
         : a,
@@ -1903,7 +1919,7 @@ app.get("/users", (req, res) => {
 
 // Create AND issue the invitation in one step: an account with no way in is a
 // dead row, and two calls would let one succeed without the other.
-app.post("/users", (req, res) => {
+app.post("/users", async (req, res) => {
   const me = accountAdmin(req, res);
   if (!me) return;
   const name = String(req.body?.name ?? "").trim();
@@ -1916,13 +1932,14 @@ app.post("/users", (req, res) => {
     exists: list.some((a) => a.name === name),
   });
   if (!v.ok) return res.status(me?.role === "admin" ? 400 : 403).json({ error: v.error });
+  if (!(await stepUpIfTwoFactor(req, res, me!))) return;
   const invite = newInvite(Date.now());
-  saveAccounts([...list, { name, role, createdAt: Date.now(), invite }]);
+  saveAccounts([...loadAccounts(), { name, role, createdAt: Date.now(), invite }]);
   console.log(`users: ${me!.name} invited ${name} as ${role}`);
   res.json({ ok: true, name, role, inviteUrl: `/invite/${invite.token}` });
 });
 
-app.delete("/users", (req, res) => {
+app.delete("/users", async (req, res) => {
   const me = accountAdmin(req, res);
   if (!me) return;
   const name = String(req.query.name ?? "").trim();
@@ -1936,12 +1953,13 @@ app.delete("/users", (req, res) => {
   if (!v.ok) return res.status(me?.role === "admin" ? 400 : 403).json({ error: v.error });
   const keep = keepsTwoAdminsVerdict(twoFactorOn(), list.filter((a) => a.name !== name));
   if (!keep.ok) return res.status(400).json({ error: keep.error });
-  saveAccounts(list.filter((a) => a.name !== name));
+  if (!(await stepUpIfTwoFactor(req, res, me!))) return;
+  saveAccounts(loadAccounts().filter((a) => a.name !== name));
   console.log(`users: ${me!.name} removed ${name}`);
   res.json({ ok: true });
 });
 
-app.post("/users/role", (req, res) => {
+app.post("/users/role", async (req, res) => {
   const me = accountAdmin(req, res);
   if (!me) return;
   const name = String(req.body?.name ?? "").trim();
@@ -1954,9 +1972,16 @@ app.post("/users/role", (req, res) => {
     exists: list.some((a) => a.name === name),
   });
   if (!v.ok) return res.status(me?.role === "admin" ? 400 : 403).json({ error: v.error });
-  const after = list.map((a) => (a.name === name ? { ...a, role } : a));
+  const now = Date.now();
+  // A demotion ends the sessions that were opened as an admin: the role is
+  // re-read on every request anyway, but a session that was ridden while it
+  // was admin should not survive the decision to demote.
+  const after = list.map((a) =>
+    a.name === name ? { ...a, role, ...(a.role === "admin" && role === "member" ? { sessionsAfter: now } : {}) } : a,
+  );
   const keep = keepsTwoAdminsVerdict(twoFactorOn(), after);
   if (!keep.ok) return res.status(400).json({ error: keep.error });
+  if (!(await stepUpIfTwoFactor(req, res, me!))) return;
   saveAccounts(after);
   res.json({ ok: true });
 });
@@ -2044,12 +2069,19 @@ app.post("/2fa/passkey/delete", async (req, res) => {
     if (!(await stepUpOk(req, res, me))) return;
   }
   const list = loadAccounts();
-  const after = list.map((a) => (a.name === owner ? { ...a, passkeys: (a.passkeys ?? []).filter((p) => p.id !== id) } : a));
+  // A removed passkey is usually a LOST device, and that device may still hold
+  // a signed-in session: end them all. The person removing their own passkey
+  // gets a fresh cookie, so the device they are using stays signed in.
+  const now = Date.now();
+  const after = list.map((a) =>
+    a.name === owner ? { ...a, passkeys: (a.passkeys ?? []).filter((p) => p.id !== id), sessionsAfter: now } : a,
+  );
   const keep = keepsTwoAdminsVerdict(twoFactorOn(), after);
   if (!keep.ok) return res.status(400).json({ error: keep.error });
   if (twoFactorOn() && owner === me.name && !after.find((a) => a.name === owner)?.passkeys?.length)
     return res.status(400).json({ error: "that is your last passkey — with two-factor on you could no longer sign in" });
   saveAccounts(after);
+  if (owner === me.name) res.setHeader("Set-Cookie", sessionCookie(me.name, !!cookieSession(req)?.mfa));
   console.log(`2fa: ${me.name} removed a passkey of ${owner}`);
   res.json({ ok: true });
 });
@@ -2094,7 +2126,7 @@ app.post("/2fa/reset", async (req, res) => {
   const invite = newInvite(Date.now());
   saveAccounts(
     loadAccounts().map((a) =>
-      a.name === target ? { name: a.name, role: a.role, createdAt: a.createdAt, invite } : a,
+      a.name === target ? { name: a.name, role: a.role, createdAt: a.createdAt, invite, sessionsAfter: Date.now() } : a,
     ),
   );
   console.log(`2fa: ${me.name} reset the access of ${target}`);

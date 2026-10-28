@@ -27,6 +27,10 @@ export interface Account {
   /** An outstanding enrollment code: what lets a device register a passkey
    *  while two-factor is on. Single use, short-lived. */
   enroll?: { code: string; expiresAt: number; by: string };
+  /** A session cookie issued before this instant is refused. Set when access
+   *  is reset, a passkey removed or an admin demoted: without it a session
+   *  opened before the reset (a stolen one, a lost phone's) outlived it. */
+  sessionsAfter?: number;
 }
 
 export interface Passkey {
@@ -152,7 +156,7 @@ export function readSessionFull(
   secret: Buffer,
   now: number,
   maxAgeMs: number,
-): { user: string; mfa: boolean } | null {
+): { user: string; mfa: boolean; issuedAt: number } | null {
   const parts = String(token ?? "").split(".");
   if (parts.length !== 3 && parts.length !== 4) return null;
   const mac = parts[parts.length - 1];
@@ -168,7 +172,7 @@ export function readSessionFull(
   if (now - issuedAt > maxAgeMs) return null;
   try {
     const user = Buffer.from(u, "base64url").toString("utf8");
-    return user ? { user, mfa: mfa === "1" } : null;
+    return user ? { user, mfa: mfa === "1", issuedAt } : null;
   } catch {
     return null;
   }
@@ -178,9 +182,14 @@ export function readSession(token: string, secret: Buffer, now: number, maxAgeMs
   return readSessionFull(token, secret, now, maxAgeMs)?.user ?? null;
 }
 
-/** A week: long enough to hand the link over by another channel, short enough
- *  that a forgotten one stops working. */
-export const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
+/** Is a session issued at `issuedAt` still good for this account? */
+export function sessionAlive(issuedAt: number, acct: Pick<Account, "sessionsAfter">): boolean {
+  return !acct.sessionsAfter || issuedAt >= acct.sessionsAfter;
+}
+
+/** 48 hours: enough to hand the link over by another channel, short enough
+ *  that a link left lying in a chat stops working. Was a week. */
+export const INVITE_TTL_MS = 48 * 3600 * 1000;
 
 export function newInvite(now: number): { token: string; expiresAt: number } {
   return { token: randomBytes(24).toString("base64url"), expiresAt: now + INVITE_TTL_MS };
