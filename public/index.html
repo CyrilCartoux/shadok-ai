@@ -283,7 +283,7 @@
     font-family: var(--mono); font-size: 12px; text-align: center;
     padding: 6px 12px;
   }
-  /* The re-login reminder (sign-in within 24h / expired). Same top strip as the
+  /* The re-login reminder (sign-in within 48h / expired). Same top strip as the
      update banner; its own id so the two never share styling by accident. */
   #expiryBanner {
     position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
@@ -6260,9 +6260,9 @@
     updateExpiryBanner();   // the banner must track the clock even menu-closed
   }
 
-  // ── Re-login reminder banner (sign-in within 24h / expired) ───────────────
+  // ── Re-login reminder banner (sign-in within 48h / expired) ───────────────
   // A top strip that nags to re-login before the token lapses and the agents
-  // start getting 401s. The decision (and its 24h threshold) is pure —
+  // start getting 401s. The decision (and its 48h threshold) is pure —
   // window.expiryWarning, public/auth-expiry.js — so only the DOM lives here.
   function updateExpiryBanner() {
     const w = window.expiryWarning(lastAuth);
@@ -9342,7 +9342,7 @@
       .catch(() => {});
   });
   setInterval(refreshUsage, 60_000);
-  // The sign-in deadline is days out, so a coarse poll catches the 24h crossing
+  // The sign-in deadline is days out, so a coarse poll catches the 48h crossing
   // in good time without hammering /auth (which also re-checks the account).
   setInterval(refreshAuthRows, 10 * 60_000);
 
