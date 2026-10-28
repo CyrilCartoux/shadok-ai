@@ -17,7 +17,15 @@
     /* The page the panels sit on: a shade darker than --bg, so the nav and the
        conversation read as cards (the "sober" pass, 2026-10-28). */
     --page: #0d0f14;
-    --radius: 12px;
+    --radius: 14px;
+    /* Depth instead of lines: panels are told apart by tone and shadow, not by
+       a border (the "fluid" pass, 2026-10-28). */
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25), 0 10px 30px rgba(0, 0, 0, 0.22);
+    --shadow-float: 0 2px 6px rgba(0, 0, 0, 0.35), 0 24px 60px rgba(0, 0, 0, 0.45);
+    /* Motion: short, decelerating, transform/opacity only. */
+    --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --t-fast: 120ms;
+    --t-med: 200ms;
     --bg: #14161d;
     --bg-raised: #1b1e27;
     --bg-inset: #0e1015;
@@ -48,18 +56,20 @@
      a pale amber on white. Accent-tinted surfaces (--amber-soft) derive from
      --amber and follow on their own. */
   :root[data-mode="light"] {
-    --page: #eef0f4;
-    --bg: #f7f8fa;
+    --page: #f4f6f9;
+    --bg: #ffffff;
     --bg-raised: #ffffff;
-    --bg-inset: #e5e8ee;
-    --line: #d2d7e0;
-    --text: #1b2030;
-    --text-dim: #5c6577;
+    --bg-inset: #f1f3f7;
+    --line: #e6e9ef;
+    --text: #0f172a;
+    --text-dim: #64748b;
+    --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px rgba(15, 23, 42, 0.06);
+    --shadow-float: 0 2px 8px rgba(15, 23, 42, 0.06), 0 24px 56px rgba(15, 23, 42, 0.14);
     --ok: #2f9e44;
     --err: #cf4436;
     --phosphor: #c77800;
-    --menu-bg: #ffffff;
-    --menu-hover: #eceff5;
+    --menu-bg: rgba(255, 255, 255, 0.86);
+    --menu-hover: #f1f3f7;
   }
   /* Colour palettes, chosen per instance from the ⋯ menu and stored server-side
      (like the instance name). Only the accent family changes; the dark base
@@ -76,7 +86,11 @@
   html, body { height: 100%; }
   html { overflow: hidden; }
   body {
-    background: var(--page);
+    /* A faint glow of the instance's accent in one corner — warmth without a
+       visible element. */
+    background:
+      radial-gradient(1200px 600px at 100% -10%, color-mix(in srgb, var(--amber) 7%, transparent), transparent 70%),
+      var(--page);
     color: var(--text);
     font-family: var(--sans);
     font-size: 14px;
@@ -133,7 +147,7 @@
     align-items: center;
     gap: 12px;
     padding: 10px 16px;
-    background: var(--page);
+    background: transparent;
     flex-wrap: wrap;
   }
   /* Keep the toolbar buttons together so they never split across lines. */
@@ -230,9 +244,9 @@
   header .ver-chan.alpha { color: var(--amber); opacity: .85; }
   #verMenu {
     position: fixed; top: 42px; left: 12px; z-index: 1001;
-    background: var(--menu-bg); border: 1px solid var(--line); border-radius: 6px;
+    background: var(--menu-bg); border: none; border-radius: 12px;
     padding: 10px 12px; font-family: var(--sans); font-size: 12px;
-    min-width: 210px; box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    min-width: 210px; box-shadow: var(--shadow-float); backdrop-filter: blur(14px);
   }
   #verMenu .vm-row { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 4px; }
   #verMenu .vm-label { color: var(--text-dim); }
@@ -246,9 +260,9 @@
      the cursor. Home for the per-channel actions. */
   #tabMenu {
     position: fixed; z-index: 1002;
-    background: var(--menu-bg); border: 1px solid var(--line); border-radius: 6px;
+    background: var(--menu-bg); border: none; border-radius: 12px;
     padding: 4px; font-family: var(--sans); font-size: 12px;
-    min-width: 170px; box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    min-width: 170px; box-shadow: var(--shadow-float); backdrop-filter: blur(14px);
   }
   #tabMenu .tm-item {
     display: block; width: 100%; text-align: left; cursor: pointer;
@@ -460,8 +474,13 @@
   #moreMenu .mm-mode button.active { border-color: var(--amber); color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent); }
   button:hover { background: var(--bg-inset); border-color: var(--line); color: var(--text); }
   button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
-  button.primary { background: var(--amber); border-color: var(--amber); color: #1a1205; font-weight: 600; }
-  button.primary:hover { background: var(--amber); border-color: var(--amber); color: #1a1205; }
+  button.primary {
+    background: linear-gradient(135deg, var(--amber), color-mix(in srgb, var(--amber) 72%, #fff));
+    border-color: transparent; color: #1a1205; font-weight: 600;
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--amber) 30%, transparent);
+  }
+  button.primary:hover { background: linear-gradient(135deg, var(--amber), var(--amber)); border-color: transparent; color: #1a1205; }
+  button:active:not(:disabled) { transform: scale(0.97); }
   button.primary:hover { filter: brightness(1.1); }
   button:disabled { opacity: 0.4; cursor: default; }
 
@@ -473,9 +492,9 @@
     flex-direction: column;
     gap: 2px;
     background: var(--bg-raised);
-    border: 1px solid var(--line);
     border-radius: var(--radius);
-    padding: 12px 8px;
+    box-shadow: var(--shadow-card);
+    padding: 14px 10px;
     overflow-y: auto;
   }
   #tabbar .side-label { padding: 0 8px 8px; font-size: 13px; font-weight: 600; color: var(--text); }
@@ -529,10 +548,19 @@
   .tab.active {
     color: var(--text);
     font-weight: 600;
-    border-left-color: var(--phosphor);
-    border-radius: 0 8px 8px 0;
-    box-shadow: inset 3px 0 0 var(--phosphor);
   }
+  /* The selection is a soft accent PILL behind the active row, one element that
+     glides from row to row (placeActivePill) instead of a bar that jumps. It
+     sits under the rows, so a state background (.working / .needs-answer /
+     .unread) still reads on top of it. */
+  #tabbar { position: relative; }
+  #activePill {
+    position: absolute; left: 10px; right: 10px; top: 0; height: 0;
+    border-radius: 10px; pointer-events: none; z-index: 0; opacity: 0;
+    background: color-mix(in srgb, var(--amber) 13%, var(--bg-raised));
+    transition: transform var(--t-med) var(--ease), height var(--t-med) var(--ease), opacity var(--t-fast) var(--ease);
+  }
+  #tabbar .tab { z-index: 1; transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
   /* Full-width row 2: "xxx ago" on the left, context % hard right. */
   /* Height RESERVED even when empty: "xxx ago" / % arrive after the reload —
      without it the tab grows by a line as they appear (jump / clip). */
@@ -574,7 +602,10 @@
   }
   .tab .timer.done { color: var(--text-dim); }
   /* Channel states: working / waiting for an answer / unread response. */
-  .tab.working { background: var(--amber-soft); animation: breathe 1.6s ease-in-out infinite; }
+  .tab.working {
+    background: linear-gradient(110deg, transparent 25%, var(--amber-soft) 50%, transparent 75%) 0 0 / 250% 100%;
+    animation: sheen 2.2s linear infinite;
+  }
   .tab.needs-answer {
     background: color-mix(in srgb, var(--amber) 28%, transparent);
     color: var(--text);
@@ -582,7 +613,7 @@
   .tab.unread {
     background: rgba(127, 201, 127, 0.14);
     border-left-color: var(--ok);
-    border-radius: 0 4px 4px 0;
+    border-radius: 0 8px 8px 0;
     color: var(--text);
   }
   /* Background work still running (shells and/or monitors the agent left going,
@@ -642,8 +673,8 @@
     gap: 2px;
     text-align: left;
     padding: 8px;
-    border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
-    border-radius: 10px;
+    border: 1px solid transparent;
+    border-radius: 12px;
     width: 100%;
     background: linear-gradient(var(--amber-soft), var(--amber-soft)), var(--bg-raised);
   }
@@ -657,7 +688,7 @@
   #tweakCta .tweak-arrow { display: inline-block; transition: transform 0.15s ease; }
   /* No permanent animation: an element blinking here would compete with the
      real signals (a waiting tab, the gauges) and would turn into noise. */
-  #tweakCta:hover { border-color: var(--amber); box-shadow: 0 0 12px color-mix(in srgb, var(--amber) 18%, transparent); }
+  #tweakCta:hover { box-shadow: 0 6px 20px color-mix(in srgb, var(--amber) 22%, transparent); }
   #tweakCta:hover .tweak-arrow { transform: translateX(2px); }
   #tweakCta.busy { opacity: 0.7; cursor: default; }
   #tweakCta.failed { border-color: var(--err); background: transparent; }
@@ -733,8 +764,8 @@
       width: 190px; flex: none;
       display: flex; flex-direction: column; gap: 2px;
       background: var(--bg-inset);
-      border: 1px solid var(--line); border-right: none;
       border-radius: var(--radius) 0 0 var(--radius);
+      box-shadow: var(--shadow-card);
       padding: 12px 8px; overflow-y: auto;
     }
     body.has-groups #tabbar { border-radius: 0 var(--radius) var(--radius) 0; }
@@ -751,7 +782,7 @@
       cursor: pointer; user-select: none; color: var(--text-dim); font-size: 13px;
     }
     .rail-item:hover { background: var(--bg-raised); color: var(--text); }
-    .rail-item.active { background: var(--bg-raised); border-color: var(--line); color: var(--text); }
+    .rail-item.active { background: var(--bg-raised); border-color: transparent; color: var(--text); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.05); }
     .rail-item.drop-target { border-color: var(--amber); border-style: dashed; }
     .rail-item.dragging { opacity: 0.4; }
     .rail-icon {
@@ -840,6 +871,42 @@
   .icon-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 8px 2px 2px; }
   .icon-picker input { width: 100%; font-size: 13px; box-sizing: border-box; }
 
+  /* ── Motion ─────────────────────────────────────────────
+     Short (120–220 ms), decelerating, transform/opacity only — it says where
+     something comes from, it never holds content back. Live text keeps its own
+     streaming; replayed history (.hist) appears at once, untouched. */
+  @keyframes fade-in { from { opacity: 0; } }
+  @keyframes turn-in { from { opacity: 0; transform: translateY(6px); } }
+  @keyframes row-in { from { opacity: 0; transform: translateX(-4px); } }
+  @keyframes pop-in { from { opacity: 0; transform: scale(0.98) translateY(-2px); } }
+  @keyframes badge-pop { 0% { transform: scale(0.4); opacity: 0; } 70% { transform: scale(1.15); } }
+  @keyframes sheen { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+  .turn:not(.hist) { animation: turn-in var(--t-med) var(--ease) both; }
+  /* Switching agent: its conversation fades in (the restart comes for free —
+     display:none → block restarts a CSS animation). */
+  .transcript:not([hidden]) { animation: fade-in 160ms var(--ease); }
+  /* Switching group: its agents arrive one after the other, the first 8 only. */
+  #tabbar .tab { animation: row-in var(--t-med) var(--ease) both; }
+  #tabbar .tab:nth-child(2) { animation-delay: 20ms; }
+  #tabbar .tab:nth-child(3) { animation-delay: 40ms; }
+  #tabbar .tab:nth-child(4) { animation-delay: 60ms; }
+  #tabbar .tab:nth-child(5) { animation-delay: 80ms; }
+  #tabbar .tab:nth-child(6) { animation-delay: 100ms; }
+  #tabbar .tab:nth-child(7) { animation-delay: 120ms; }
+  #tabbar .tab:nth-child(n+8) { animation-delay: 140ms; }
+  /* A working row keeps its sheen whatever its rank. */
+  #tabbar .tab.working { animation: sheen 2.2s linear infinite; }
+  .rail-item { transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+  .overlay:not([hidden]) { animation: fade-in 160ms var(--ease); }
+  .overlay:not([hidden]) > * { animation: pop-in var(--t-med) var(--ease); }
+  #moreMenu:not([hidden]), #tabMenu:not([hidden]), #verMenu:not([hidden]), .icon-picker:not([hidden]) {
+    animation: pop-in 160ms var(--ease); transform-origin: top center;
+  }
+  .sec-badge:not([hidden]) { animation: badge-pop 280ms cubic-bezier(0.3, 1.6, 0.5, 1); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  }
+
   /* ── Body ────────────────────────────────────────────── */
   /* The panels are cards on the page: a gap around them, rounded corners.
      A phone keeps edge-to-edge panels (see the mobile query). */
@@ -849,7 +916,7 @@
      overflows (with a session running the transcript fits exactly → inert). */
   .chat-pane {
     flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; position: relative;
-    background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--bg); border-radius: var(--radius); box-shadow: var(--shadow-card);
   }
   /* File drag-and-drop target: a dashed accent overlay while a file hovers.
      pointer-events:none so the drop still lands on the pane underneath. */
@@ -868,12 +935,15 @@
     font-family: var(--sans);
     font-size: 13px;
     background: var(--bg-inset);
-    border: 1px solid var(--line);
-    border-radius: 4px;
+    border: 1px solid transparent;
+    border-radius: 10px;
     color: var(--text);
-    padding: 9px 10px;
+    padding: 10px 12px;
+    transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-med) var(--ease), background var(--t-fast) var(--ease);
   }
-  input[type="text"]:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+  /* A filled field at rest, a soft halo of the accent on focus — the composer's
+     treatment, for every text field. */
+  input[type="text"]:focus-visible { outline: none; background: var(--bg-raised); border-color: color-mix(in srgb, var(--amber) 55%, transparent); box-shadow: 0 0 0 4px var(--amber-soft); }
   .radio-row { display: flex; gap: 14px; flex-wrap: wrap; }
   #modelRow { gap: 6px; }
   .bang-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -916,16 +986,18 @@
     position: relative;
     display: flex; flex-direction: column; gap: 4px;
     text-align: left;
-    padding: 9px 10px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
+    padding: 10px 12px;
+    border: 1px solid transparent;
+    border-radius: 12px;
     background: var(--bg-inset);
     color: var(--text);
+    transition: background var(--t-fast) var(--ease), box-shadow var(--t-med) var(--ease), transform var(--t-fast) var(--ease);
     font: inherit;
     cursor: pointer;
   }
   .profile-card:hover { border-color: var(--text-dim); }
-  .profile-card.selected { border-color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber); }
+  .profile-card:hover { background: color-mix(in srgb, var(--amber) 6%, var(--bg-inset)); border-color: transparent; transform: translateY(-1px); }
+  .profile-card.selected { background: color-mix(in srgb, var(--amber) 12%, var(--bg-raised)); border-color: transparent; box-shadow: 0 0 0 2px color-mix(in srgb, var(--amber) 70%, transparent); }
   .profile-card.selected .pc-name { color: var(--amber); }
   .profile-card:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
   .pc-name { font-size: 14px; font-weight: 600; }
@@ -1108,8 +1180,7 @@
     word-break: break-word;
   }
   .turn.user .bubble {
-    background: var(--amber-soft);
-    border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
+    background: color-mix(in srgb, var(--amber) 14%, var(--bg-raised));
   }
   /* A file the agent delivered (SendUserFile): images inline, others a download
      card. The bubble itself is a transparent container — the cards carry the box. */
@@ -1153,8 +1224,7 @@
     color: #fff; border-radius: 50%; width: 16px; height: 16px; font-size: 9px; line-height: 1; cursor: pointer; padding: 0; }
   .cmp-att .cmp-x:hover { background: var(--err); }
   .turn.claude .bubble {
-    background: var(--bg-raised);
-    border: 1px solid var(--line);
+    background: var(--bg-inset);
     font-family: var(--sans);
     font-size: 14px;
     line-height: 1.55;
@@ -1490,17 +1560,18 @@
     min-width: 0;
     font-family: var(--sans);
     font-size: 14px;
-    background: var(--bg-raised);
+    background: var(--bg-inset);
     color: var(--text);
-    border: 1px solid var(--line);
+    border: 1px solid transparent;
     border-radius: var(--radius);
-    padding: 11px 14px;
+    padding: 12px 16px;
     resize: none;
+    transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-med) var(--ease), background var(--t-fast) var(--ease);
     min-height: 42px;
     max-height: 160px;
     line-height: 1.45;
   }
-  #composer textarea:focus-visible { outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
+  #composer textarea:focus-visible { outline: none; background: var(--bg-raised); border-color: color-mix(in srgb, var(--amber) 55%, transparent); box-shadow: 0 0 0 4px var(--amber-soft); }
 
   /* ── Engine room (live terminal) ─────────────────────── */
   #machine {
@@ -1542,7 +1613,7 @@
      channel's actions only existed in terminal mode; it now sits above both
      views, and `hidden` only removes it while the "New agent" form is up (no
      channel to act on yet). */
-  #chanBar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg-raised); font-size: 13px; }
+  #chanBar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; background: var(--bg-raised); font-size: 13px; }
   #chanBar[hidden] { display: none; }
   #chanBar .label { color: var(--text-dim); }
   #chanBar #chanBarName { color: var(--text); font-size: 14px; font-weight: 600; }
@@ -1798,8 +1869,8 @@
     height: var(--app-h, auto);
     display: flex; align-items: center; justify-content: center;
     padding: 24px;
-    background: rgba(8, 9, 13, 0.62);
-    backdrop-filter: blur(2px);
+    background: rgba(8, 9, 13, 0.45);
+    backdrop-filter: blur(6px);
   }
   .overlay[hidden] { display: none; }
   /* The context shadok added, at the head of the conversation. Collapsed by
@@ -1877,9 +1948,9 @@
   #secretsPanel, .sec-panel {
     background: var(--bg-raised); color: var(--text);
     width: min(560px, 100%); max-height: min(80vh, 760px); overflow: auto;
-    border: 1px solid var(--line); border-top: 1px solid var(--amber);
-    border-radius: 6px; padding: 14px 16px;
-    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+    border: none;
+    border-radius: var(--radius); padding: 16px 18px;
+    box-shadow: var(--shadow-float);
   }
   /* Popins on a phone: near full screen, and bounded by the POPIN (hence by
      `--app-h`, keyboard deducted) instead of `80vh`, which counts the keyboard in
@@ -1896,8 +1967,7 @@
      for popins that have a footer — the others keep their simple padding. */
   .sec-panel.modal { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
   .modal > .sec-head {
-    flex: 0 0 auto; margin: 0; padding: 11px 16px;
-    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto; margin: 0; padding: 16px 20px 6px;
   }
   /* Same treatment as the cockpit's labels (.label, channel bar): the popin
      visibly belongs to the same family. */
@@ -1907,8 +1977,7 @@
   .modal-body { flex: 1 1 auto; overflow: auto; padding: 14px 16px; }
   .modal-foot {
     flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end;
-    gap: 8px; padding: 11px 16px;
-    border-top: 1px solid var(--line); background: rgba(0, 0, 0, 0.18);
+    gap: 8px; padding: 12px 20px 16px;
   }
   /* Pushes what follows to the right: a footer may carry a note on the left. */
   .modal-foot .foot-note { margin-right: auto; font-size: 11px; color: var(--text-dim); }
@@ -1919,8 +1988,7 @@
      mono label) and no footer is required. */
   .sec-panel.pinned { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
   .sec-panel.pinned > .pin-head {
-    flex: 0 0 auto; padding: 14px 16px 10px;
-    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto; padding: 16px 18px 10px;
   }
   .sec-panel.pinned > .pin-head > .sec-head { margin-bottom: 8px; }
   .sec-panel.pinned > .pin-head > .sec-note:last-child { margin-bottom: 0; }
@@ -2605,6 +2673,7 @@
     <div id="iconEmpty" class="icon-empty" hidden>No emoji for that word.</div>
   </div>
   <nav id="tabbar" aria-label="Agents">
+    <div id="activePill" aria-hidden="true"></div>
     <div class="label side-label"><span class="sl-all">Agents</span><span class="sl-view" id="viewLabel"></span></div>
     <div id="ungrouped"></div>
     <div id="groups"></div>
@@ -4243,7 +4312,37 @@
     $("viewLabel").textContent = g ? `${g.icon} ${g.nameEl.textContent}` : "Ungrouped";
     $("viewEmpty").hidden = tabsInView(v).length > 0 || v === "ungrouped";
     renderRail();
+    placeActivePill();
   }
+
+  /**
+   * Move the selection pill under the active row. Measured, not computed from
+   * the DOM order: rows live in several containers (ungrouped, each group) and
+   * some are hidden by the group view. The pill is inside the scrolling column,
+   * so it scrolls with the rows; only a layout change needs a new placement,
+   * which is why this runs on every column mutation (from applyView) and on
+   * resize. A hidden or absent active row hides the pill rather than leaving it
+   * on a stale spot.
+   */
+  function placeActivePill() {
+    const pill = $("activePill");
+    if (!pill) return;
+    const row = active && active.btnEl;
+    // The tweak slot is sticky at the bottom: a pill measured there would drift
+    // as the list scrolls. It has its own tinted card anyway.
+    if (!row || !row.offsetParent || !tabbar.contains(row) || row.closest("#tweakSlot")) { pill.style.opacity = "0"; return; }
+    const r = row.getBoundingClientRect(), box = tabbar.getBoundingClientRect();
+    const top = r.top - box.top + tabbar.scrollTop;
+    // First placement jumps (nothing to glide from); later ones glide.
+    if (pill.style.opacity !== "1") {
+      pill.style.transition = "none";
+      requestAnimationFrame(() => { pill.style.transition = ""; });
+    }
+    pill.style.transform = `translateY(${top}px)`;
+    pill.style.height = r.height + "px";
+    pill.style.opacity = "1";
+  }
+  window.addEventListener("resize", () => requestAnimationFrame(placeActivePill));
 
   const moodOf = (t) =>
     ["needs-answer", "unread", "working"].find((m) => t.btnEl.classList.contains(m)) || null;
