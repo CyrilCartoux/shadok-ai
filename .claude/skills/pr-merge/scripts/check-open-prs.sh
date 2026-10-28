@@ -25,15 +25,25 @@
 #           merge it, so print it EVERY time: repeated wakes are self-limiting,
 #           the PR disappears once merged.
 #
-#   TELL  — a fork (a "Tweak Shadok-AI" delivery is one, and on a public repo
-#           anyone can open one) or a conflicted PR. The loop never merges these;
-#           the human decides. Print them only when their state CHANGED, or a
-#           single stuck PR wakes the agent every minute forever to answer "not
-#           mine" — which is exactly what happened at a one-minute cadence.
+#   TELL  — a PR the loop is not allowed to merge on its own: a fork (a "Tweak
+#           Shadok-AI" delivery is one, and on a public repo anyone can open
+#           one), a conflicted PR, or an AUTHOR OUTSIDE THE MERGE WHITELIST.
+#           The human decides on these; the loop can only report them. Print
+#           them only when their state CHANGED, or a single stuck PR wakes the
+#           agent every minute forever to answer "not mine" — which is exactly
+#           what happened at a one-minute cadence.
+#
+# The whitelist arm is the newest, and it was paid for the same way: #296 was
+# opened by a human outside the whitelist, so the entry filter stopped the loop
+# every single slot. The guard still read it as actionable, so for an hour and a
+# half it woke the LLM every five minutes to re-derive the same refusal and
+# print NOTHING TO SHOW. The guard must apply the SAME entry filter as the
+# skill, or it wakes the agent for work the agent is forbidden to do.
 #
 # Filtering forks out entirely was the first fix, and it went too far: it removed
 # the noise by removing the signal, so a Tweak delivery sat unseen. Change
-# detection keeps both.
+# detection keeps both: such a PR is announced ONCE, then stays quiet until
+# something about it actually moves.
 #
 # Silence discipline (invariant 16): a transient gh/network failure exits 0
 # without printing. Only real news wakes the agent. Note that "no open PRs" is
@@ -56,19 +66,25 @@ state_file="$HOME/.shadok-ai/checks/pr-open.state"
 # which Go templates only reach through an assignment loop — the five TAB-
 # separated fields the awk below expects are unchanged.
 rows=$(timeout 25 gh pr list --repo "$repo" --state open --limit 50 \
-    --json number,title,mergeStateStatus,isDraft,baseRefName,isCrossRepository,labels \
+    --json number,title,mergeStateStatus,isDraft,baseRefName,isCrossRepository,labels,author \
     --jq '.[]
           | select(.isDraft | not)
           | select(.baseRefName == "main")
           | select([.labels[].name] | index("hold") | not)
-          | [ (if (.isCrossRepository | not) and .mergeStateStatus != "DIRTY" then "ACT" else "TELL" end),
-              "#\(.number)", .mergeStateStatus,
-              (if .isCrossRepository then "fork" else "" end), .title ]
+          | (if .isCrossRepository then "fork"
+             elif .mergeStateStatus == "DIRTY" then "conflict"
+             elif (.author.login != "shadok-ai-dev" and (.author.is_bot | not)) then "author"
+             else "" end) as $why
+          | [ (if $why == "" then "ACT" else "TELL" end),
+              "#\(.number)", .mergeStateStatus, $why, (.author.login // "?"), .title ]
           | @tsv' 2>/dev/null) || exit 0
 
 printf '%s\n' "$rows" | awk -F'\t' -v state="$state_file" '
-  $1 == "ACT"  { act = act sprintf("%s %s — %s\n", $2, $3, $5) }
-  $1 == "TELL" { tell[$2] = sprintf("%s %s (%s, awaiting a human) — %s", $2, $3, ($4 == "fork" ? "fork" : "conflict"), $5)
+  $1 == "ACT"  { act = act sprintf("%s %s — %s\n", $2, $3, $6) }
+  $1 == "TELL" { why = ($4 == "fork" ? "fork" \
+                        : ($4 == "conflict" ? "conflict" \
+                           : "@" $5 " is not in the merge whitelist"))
+                 tell[$2] = sprintf("%s %s (%s, awaiting a human) — %s", $2, $3, why, $6)
                  seen = seen sprintf("%s=%s%s\n", $2, $3, $4) }
   END {
     # A watched PR is news the first time it is seen and whenever its state

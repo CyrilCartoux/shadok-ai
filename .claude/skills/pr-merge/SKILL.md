@@ -28,6 +28,10 @@ A PR is a candidate only when **all four** hold:
 `isCrossRepository: true` (a fork) → **never merged**, reported. One thing the
 loop may do for it: unblock its CI — see "Approving a fork's workflows" below.
 
+The deterministic guard below applies **this same filter**. A PR that fails it is
+announced once and then kept quiet: being woken to re-derive a refusal the filter
+already settled costs tokens and produces nothing.
+
 ```bash
 gh pr list --state open --limit 50 --json \
   number,title,author,isDraft,mergeStateStatus,headRefName,baseRefName,labels,isCrossRepository
@@ -144,9 +148,11 @@ treatment:
 - **ACT** — non-draft, onto `main`, not a fork, not conflicted. The loop can
   merge it, so it is printed **every** pass. Repeated wakes are self-limiting:
   the PR leaves the list once merged.
-- **TELL** — a **fork** (a "Tweak Shadok-AI" delivery is one, and on a public
-  repo anyone can open one) or a **conflicted** PR. The loop never merges these;
-  a human decides. They are printed **only when their state changed**, tracked in
+- **TELL** — a PR the loop may not merge on its own: a **fork** (a "Tweak
+  Shadok-AI" delivery is one, and on a public repo anyone can open one), a
+  **conflicted** PR, or an **author outside the merge whitelist** (entry filter,
+  point 3). The loop never merges these; a human decides. They are printed
+  **only when their state changed**, tracked in
   `~/.shadok-ai/checks/pr-open.state`.
 
 That split exists because both extremes were tried and both were wrong. Printing
@@ -154,6 +160,14 @@ everything meant one stuck PR woke the agent every minute, forever, to answer
 "not mine". Filtering forks out entirely removed the noise *and* the signal — a
 Tweak delivery then sat unseen. Change detection keeps the news and drops the
 repetition.
+
+The whitelist arm was paid for the same way, on 2026-10-28. #296 came from an
+author outside the whitelist, so the entry filter stopped the loop at every
+slot — while the guard still read the PR as actionable. For an hour and a half
+the LLM was woken every five minutes to re-derive the same refusal and print
+`NOTHING TO SHOW`. The lesson is the general one: a guard that does not apply
+the skill's own entry filter wakes the agent for work the agent is forbidden to
+do, and the cost is paid every slot until someone notices.
 
 State is rewritten on every pass, including for PRs that left the list: a PR
 reopened later must be announced again, not swallowed because it was seen once.
