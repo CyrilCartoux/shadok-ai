@@ -36,3 +36,33 @@ test("group icon: typed text is trimmed and kept short, empty keeps the old one"
   assert.equal(cleanGroupIcon("   "), null);
   assert.equal(cleanGroupIcon(undefined), null);
 });
+
+// @ts-ignore — plain ESM shared with the browser
+import { idleMood, splitHistory, HISTORY_FIRST } from "../public/group-nav.js";
+
+test("idle mood: a waiting question first, then work, then new content", () => {
+  assert.equal(idleMood(null, 0), null);
+  assert.equal(idleMood({ needsAnswer: true, busy: true, lastAt: 9 }, 1), "needs-answer");
+  assert.equal(idleMood({ needsAnswer: false, busy: true, lastAt: 9 }, 1), "working");
+  assert.equal(idleMood({ needsAnswer: false, busy: false, lastAt: 9 }, 1), "unread");
+  assert.equal(idleMood({ needsAnswer: false, busy: false, lastAt: 9 }, 9), null);
+  // Nothing known yet on either side is not "unread".
+  assert.equal(idleMood({ needsAnswer: false, busy: false, lastAt: null }, 1), null);
+  assert.equal(idleMood({ needsAnswer: false, busy: false, lastAt: 9 }, null), null);
+});
+
+test("history split: the last N now, the rest behind Load older", () => {
+  const turns = Array.from({ length: 50 }, (_, i) => ({ ids: ["m" + i] }));
+  const { older, recent } = splitHistory(turns, 30);
+  assert.equal(older.length, 20);
+  assert.equal(recent.length, 30);
+  assert.deepEqual(recent[0].ids, ["m20"]);
+  assert.equal(splitHistory(turns.slice(0, 10)).older.length, 0);
+  assert.equal(HISTORY_FIRST, 30);
+});
+
+test("history split: a link into the older part draws everything", () => {
+  const turns = Array.from({ length: 50 }, (_, i) => ({ ids: ["m" + i] }));
+  assert.equal(splitHistory(turns, 30, "m3").recent.length, 50);
+  assert.equal(splitHistory(turns, 30, "m45").recent.length, 30);
+});

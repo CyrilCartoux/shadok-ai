@@ -1008,7 +1008,21 @@ and are never touched.
   a `MutationObserver` on the agents column, gated on a signature of what it
   shows: the column mutates constantly (LEDs, timers, reconnects) and a rebuild
   per mutation replaced items under the pointer. The selected group is a
-  per-browser choice (`cp.groupView`, namespaced by launch dir). **Keyed by the server's launch
+  per-browser choice (`cp.groupView`, namespaced by launch dir).
+- **Lazy loading**: the restore gives every tab its launch parameters but
+  connects only the active one (and through the groups column, the rest of its
+  group) plus the home agent; `wakeTab` connects the others when their group or
+  they themselves are shown, or their menu is opened. It used to connect every
+  agent at once — one WebSocket, one transcript parse and one full history
+  render per agent on each page load, and a `start` that respawns any agent
+  whose process had gone. An unconnected tab is not blind: `GET /channels`,
+  polled every 4 s already, carries a derived `live` summary per running agent
+  (`src/live-status.ts`, from `busy`, `lastDialogKey` and a `lastActivityAt`
+  stamped in `broadcast`), turned into the tab's mood by `idleMood`; its first
+  sight is the baseline, so only what is said after the page loaded counts as
+  unread. History is drawn in two parts (`splitHistory`): the last 30 turns,
+  and the rest behind *Load older*, which draws them above and keeps the
+  reader's place. **Keyed by the server's launch
   directory** — each project/repo the server is started from keeps its own
   cockpit, its own bot token, and its own board group. Server is the source of
   truth; browser localStorage is an offline fallback consulted ONLY when the

@@ -58,3 +58,33 @@ export function cleanGroupIcon(text) {
   }
   return [...s].slice(0, 2).join("");
 }
+
+/**
+ * What a tab the page has NOT opened shows, from the `live` summary the server
+ * adds to GET /channels. `seenAt` is the content instant the tab already
+ * accounts for; anything newer is unread. A question waiting beats everything,
+ * since it blocks the agent.
+ */
+export function idleMood(live, seenAt) {
+  if (!live) return null;
+  if (live.needsAnswer) return "needs-answer";
+  if (live.busy) return "working";
+  if (live.lastAt != null && seenAt != null && live.lastAt > seenAt) return "unread";
+  return null;
+}
+
+/** How many history turns are drawn at first; the rest wait behind "Load older". */
+export const HISTORY_FIRST = 30;
+
+/**
+ * Split a replayed history into what is drawn now and what waits. A link to a
+ * message in the older part draws everything, or the link would land nowhere.
+ */
+export function splitHistory(turns, first = HISTORY_FIRST, wantMsgId = null) {
+  const list = turns || [];
+  if (list.length <= first) return { older: [], recent: list };
+  if (wantMsgId && list.slice(0, -first).some((h) => (h.ids || []).includes(wantMsgId))) {
+    return { older: [], recent: list };
+  }
+  return { older: list.slice(0, -first), recent: list.slice(-first) };
+}

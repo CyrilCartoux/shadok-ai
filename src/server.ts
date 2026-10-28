@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual, createHmac } from "node:crypto";
+import { liveStatus, ACTIVITY_MESSAGES } from "./live-status.js";
 import { execFile, spawn as spawnChild } from "node:child_process";
 import type { IncomingMessage } from "node:http";
 import fs from "node:fs";
@@ -1661,7 +1662,17 @@ app.get("/channels", (_req, res) => {
   res.json(
     loadChannels().map((ch) => {
       const mine = active.filter((c) => c.sessionId === ch.sessionId);
-      return mine.length ? { ...ch, crons: mine.map((c) => scheduleLabel(c.schedule, cronTimeZone(c))) } : ch;
+      const s = ch.sessionId ? sessions.get(ch.sessionId) : undefined;
+      // Derived per request, never stored: what a tab the browser has not
+      // opened needs to show (busy / a question waiting / new content).
+      const live = s
+        ? liveStatus({ busy: s.busy, lastDialogKey: s.lastDialogKey, lastActivityAt: s.lastActivityAt, exited: s.pilot.hasExited })
+        : null;
+      return {
+        ...ch,
+        ...(mine.length ? { crons: mine.map((c) => scheduleLabel(c.schedule, cronTimeZone(c))) } : {}),
+        ...(live ? { live } : {}),
+      };
     }),
   );
 });
@@ -3197,6 +3208,8 @@ interface Live {
    *  ledger. Each human prompt injects the rows changed since, then advances it.
    *  In-memory (near-real-time, not an audit); a restart re-anchors it to now. */
   ledgerSeenAt?: number;
+  /** When this agent last produced content (see `liveStatus`). In memory only. */
+  lastActivityAt?: number;
   cwd: string;
   pilot: Pilot;
   clients: Set<WebSocket>;
@@ -3322,6 +3335,9 @@ const IDLE_RECLAIM_MS = Number(process.env.SHADOK_IDLE_MIN ?? 60) * 60_000;
 const sessions = new Map<string, Live>();
 
 function broadcast(s: Live, msg: object, except?: WebSocket) {
+  // Remembered for the tabs that are NOT open (`liveStatus` on GET /channels):
+  // broadcast is the one place every piece of new content goes through.
+  if (ACTIVITY_MESSAGES.has((msg as { type?: string }).type ?? "")) s.lastActivityAt = Date.now();
   const data = JSON.stringify(msg);
   for (const c of s.clients) {
     if (c !== except && c.readyState === c.OPEN) c.send(data);
