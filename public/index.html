@@ -653,6 +653,10 @@
     font-weight: 600;
     color: var(--amber);
   }
+  /* The running version beside the title: the code a tweak starts from. Its own
+     span, because the title's text is rewritten while the source is fetched. */
+  #tweakCta .tweak-row { display: flex; align-items: baseline; gap: 8px; }
+  #tweakCta .tweak-ver { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
   #tweakCta .tweak-sub { font-size: 11px; color: var(--text-dim); }
   #tweakCta .tweak-arrow { display: inline-block; transition: transform 0.15s ease; }
   /* No permanent animation: an element blinking here would compete with the
@@ -2618,7 +2622,7 @@
     <div id="tweakSlot">
       <button id="tweakCta" type="button"
               title="Change shadok-ai itself — the agent works on a branch and opens a pull request">
-        <span class="tweak-title">🛠 Tweak Shadok-AI <span class="tweak-arrow">›</span></span>
+        <span class="tweak-row"><span class="tweak-title">🛠 Tweak Shadok-AI <span class="tweak-arrow">›</span></span><span class="tweak-ver" id="tweakVer"></span></span>
         <span class="tweak-sub">change the cockpit itself</span>
       </button>
     </div>
@@ -6724,6 +6728,8 @@
       return;
     }
     lastVersion = msg;
+    const tv = document.getElementById("tweakVer");
+    if (tv) tv.textContent = msg.current ? "v" + msg.current : "";
     if (!verView) return;
     const ahead = msg.latest && verIsNewer(msg.latest, msg.current);
     verView.textContent = ahead ? "v" + msg.current + " → " + msg.latest : "v" + (msg.current || "?");

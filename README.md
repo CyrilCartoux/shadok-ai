@@ -255,7 +255,7 @@ Enter to skip; you can add it later from the web UI).
   folds away while you type). Fields are 16px, which is what stops Safari from
   zooming in on focus. The agents column is replaced by a channel selector in
   the channel bar.
-- **Tweak Shadok-AI** — a card pinned at the bottom of the agents column. One
+- **Tweak Shadok-AI** — a card pinned at the bottom of the agents column, with the running version in grey beside its title (the code a tweak starts from). One
   click clones shadok-ai's own source into `~/.shadok-ai/self/shadok-ai` and
   starts an agent on it in its own worktree; that agent delivers its change as a
   **pull request** — a fork under your GitHub account, since you need no rights
