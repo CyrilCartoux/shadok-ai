@@ -296,6 +296,9 @@ Enter to skip; you can add it later from the web UI).
 
 ### Telegram (optional)
 
+The Telegram panel (header icon) carries a folded *How to set it up, step by step*
+guide, open until a token is saved and a group is bound.
+
 Add your bot to a group with **Topics** enabled, make it an admin with *Manage
 topics* (and *Delete messages* so `/secret` can scrub values), then in the group:
 
