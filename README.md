@@ -76,9 +76,11 @@ Enter to skip; you can add it later from the web UI).
 - **Channels** — one `claude` process each, running in parallel. Renaming,
   grouping, and closing all sync live between the browser and Telegram: it's
   one list, server-owned, not two copies.
-- **Groups column** — on a desktop the groups get a column of their own, left
-  of the agents: pick a group and the agents column shows only its agents
-  (*Ungrouped* holds the rest, the home agent included unless you file it). Each
+- **Groups column** — once you create a group, on a desktop the groups get a
+  column of their own, left of the agents (with no group there is no column, just
+  the single agents list): pick a group and the agents column shows only its
+  agents (*Ungrouped* holds the rest, the home agent included unless you file
+  it). Each
   group has an icon — drawn at random, double-click it to pick another: choose
   from the grid, type any emoji, or **type a word** (`rocket`, `bug`, `money`…)
   to search for a matching one — and a **＋** that creates the new agent straight
@@ -86,9 +88,10 @@ Enter to skip; you can add it later from the web UI).
   A single click on a group (its icon or its row) selects it; this matters once
   **«** folds the column to its icons, where the icon is the whole row.
   Dragging an agent onto a group still files it there, and dragging groups
-  reorders them. Double-click a name to rename it. A dot on a group you are not looking at says one of its agents
-  is waiting for you, has an unread answer, or is working. On a phone nothing
-  changes: the agents sheet still lists every group.
+  reorders them. Double-click a name to rename it. A group you are not looking at
+  carries the same signal its agents do — the row lights up (and breathes) when
+  one is working, waiting for you, or has an unread answer, the way a channel
+  does. On a phone nothing changes: the agents sheet still lists every group.
 - **Worktree isolation** — spawned agents get their own git worktree and branch
   by default, so parallel agents never collide. Work is never auto-discarded:
   an empty worktree is reclaimed on close, anything with changes or commits

@@ -590,15 +590,19 @@
     animation: breathe 1.8s ease-in-out infinite;
   }
   @media (prefers-reduced-motion: reduce) { .tab.working, .tab.has-bg { animation: none; } }
-  #newTab, #newGroup {
+  #newTab, #newGroup, #newGroupBare {
     margin-top: 8px;
     border: 1px dashed var(--line);
     font-size: 12px;
     color: var(--text-dim);
     padding: 8px;
   }
-  #newTab:hover, #newGroup:hover { color: var(--amber); border-color: var(--amber); }
+  #newTab:hover, #newGroup:hover, #newGroupBare:hover { color: var(--amber); border-color: var(--amber); }
   #newGroup { margin-top: 4px; }
+  /* The fallback "new group" entry: only on desktop, only while the rail (which
+     has its own) is hidden for want of a group. */
+  #newGroupBare { display: none; margin-top: 4px; }
+  @media (min-width: 641px) { body:not(.has-groups) #newGroupBare { display: block; } }
   /* The column's only coloured element: tabs are borderless rows and the ＋ are
      ghost buttons, so a solid card reads as an action rather than as a session.
      Pinned to the bottom (margin-top:auto + sticky) so it stays reachable while
@@ -712,7 +716,10 @@
   #groupRail { display: none; }
   .icon-picker[hidden] { display: none; }
   @media (min-width: 641px) {
-    #groupRail {
+    /* The column only earns its space once a group exists: with none, the
+       cockpit is the single agents list it always was (body.has-groups is set
+       from groups.length in applyView). */
+    body.has-groups #groupRail {
       width: 190px; flex: none;
       display: flex; flex-direction: column; gap: 2px;
       background: var(--bg-inset);
@@ -752,6 +759,15 @@
     .rail-item.unread .rail-dot { display: block; background: var(--phosphor); }
     .rail-item.working .rail-dot { display: block; background: var(--text-dim); animation: breathe 1.8s ease-in-out infinite; }
     @media (prefers-reduced-motion: reduce) { .rail-dot { animation: none !important; } }
+    /* A group carries the SAME effect its channels do — a working or finished
+       agent makes the whole group row read like that agent, not just a dot.
+       Mirrors .tab.working / .needs-answer / .unread. Shown for a group you are
+       NOT viewing (the active one shows its state on each agent in the column).
+       Placed after :hover so the state colour wins over the hover background. */
+    .rail-item.working { background: var(--amber-soft); animation: breathe 1.6s ease-in-out infinite; }
+    .rail-item.needs-answer { background: color-mix(in srgb, var(--amber) 28%, transparent); color: var(--text); }
+    .rail-item.unread { background: rgba(127, 201, 127, 0.14); border-left-color: var(--ok); color: var(--text); }
+    @media (prefers-reduced-motion: reduce) { .rail-item.working { animation: none !important; } }
     .rail-add, .rail-del {
       flex: none; display: none; border: none; background: none;
       padding: 0 3px; font-size: 13px; line-height: 1; color: var(--text-dim);
@@ -780,7 +796,11 @@
     body.rail-mini .rail-dot { position: absolute; top: 4px; right: 4px; }
 
     /* The agents column, narrowed to the selected group. */
-    #tabbar .side-label .sl-all { display: none; }
+    /* With a column the list header is the selected group's name; with no
+       column it is just "Agents" again (the "Ungrouped" view label would read
+       oddly when there is nothing to be ungrouped from). */
+    body.has-groups #tabbar .side-label .sl-all { display: none; }
+    body:not(.has-groups) #tabbar .side-label .sl-view { display: none; }
     #tabbar .group-head { display: none; }
     #tabbar .group { margin-top: 0; }
     #tabbar .group-body { padding-left: 0; }
@@ -2568,6 +2588,11 @@
     <div id="groups"></div>
     <p id="viewEmpty" class="check-hint" hidden>No agent in this group yet — create one, or drag one onto the group.</p>
     <button id="newTab" title="New agent">＋ new agent</button>
+    <!-- The rail carries "+ new group" at its foot, but the rail is gone until a
+         group exists — so this is the way to create the FIRST one. Desktop-only
+         and only while there are no groups (CSS); it hands off to the rail's
+         button once the column appears. -->
+    <button id="newGroupBare" type="button" title="New agent group">＋ new group</button>
     <div id="tweakSlot">
       <button id="tweakCta" type="button"
               title="Change shadok-ai itself — the agent works on a branch and opens a pull request">
@@ -4188,6 +4213,8 @@
 
   function applyView() {
     const v = currentView();
+    // No group → no column (invariant: the rail earns its space, see the CSS).
+    document.body.classList.toggle("has-groups", groups.length > 0);
     tabbar.dataset.view = v;
     for (const g of groups) g.el.classList.toggle("in-view", String(g.id) === v);
     const g = groups.find((x) => String(x.id) === v);
@@ -9786,12 +9813,18 @@
     markTweakTab(t);
     launchTab(t, { cwd: data.cwd, worktree: true, profile: "Shadok-Tweak" });
   });
-  newGroupBtn.addEventListener("click", () => {
+  function addGroup() {
     const g = createGroup();
     persistGroups();
+    // applyView first, so has-groups is set and the column is shown SYNCHRONOUSLY
+    // — otherwise railShown() below is still false on the first group (created
+    // from the bare button, while the rail was hidden) and it would not select.
+    applyView();
     // A new group is where you are going next: select it (it starts empty).
     if (railShown()) setView(g.id, { follow: false });
-  });
+  }
+  newGroupBtn.addEventListener("click", addGroup);
+  $("newGroupBare").addEventListener("click", addGroup);
 
   // ── Quota gauges (5h / 7d) ──────────────────────────────
   function fmtReset(sec) {
