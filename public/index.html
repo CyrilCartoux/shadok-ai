@@ -204,6 +204,24 @@
   }
   header .ver:hover { text-decoration: underline; }
   header .ver.stale { color: var(--amber); }
+  /* Small badge next to the version: which release channel this instance
+     follows (beta by default, alpha on the fast channel). Passive label — the
+     version number beside it is what opens the menu. */
+  header .ver-chan {
+    font-family: var(--mono);
+    font-size: 8px;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    padding: 0 3px;
+    margin-left: 4px;
+    vertical-align: 1px;
+    opacity: .7;
+  }
+  header .ver-chan:empty { display: none; }
+  header .ver-chan.alpha { color: var(--amber); opacity: .85; }
   #verMenu {
     position: fixed; top: 42px; left: 12px; z-index: 1001;
     background: var(--menu-bg); border: 1px solid var(--line); border-radius: 6px;
@@ -1914,7 +1932,7 @@
 <body>
 
 <header>
-  <span class="brand"><span class="brand-name" id="brandName" title="Rename this cockpit">shadok-ai</span><span class="brand-edit" id="brandEdit" title="Rename this cockpit" aria-hidden="true">✎</span> <span class="ver" id="verView" title="Running version"></span></span>
+  <span class="brand"><span class="brand-name" id="brandName" title="Rename this cockpit">shadok-ai</span><span class="brand-edit" id="brandEdit" title="Rename this cockpit" aria-hidden="true">✎</span> <span class="ver" id="verView" title="Running version"></span><span class="ver-chan" id="verChan" aria-hidden="true"></span></span>
   <span class="spacer"></span>
   <div class="gauge quota" id="quota5h" data-window="5h" title="5h rolling limit">
     <svg class="dial" viewBox="0 0 56 44" role="img" aria-label="5h rolling limit">
@@ -6148,6 +6166,7 @@
   let bootVersion = null;
   let lastVersion = null; // last {current, latest, autoUpdate} seen
   const verView = document.getElementById("verView");
+  const verChan = document.getElementById("verChan");
   const verMenu = document.getElementById("verMenu");
   const autoUpdateChk = document.getElementById("autoUpdateChk");
   const updChannelSel = document.getElementById("updChannelSel");
@@ -6178,6 +6197,14 @@
     verView.textContent = ahead ? "v" + msg.current + " → " + msg.latest : "v" + (msg.current || "?");
     verView.classList.toggle("stale", !!ahead);
     verView.title = ahead ? "Update available — click for options" : "running version — click for options";
+    // Release channel next to the number: beta by default, alpha on the fast
+    // channel. Honest per instance rather than a hardcoded label.
+    if (verChan) {
+      const ch = msg.updateChannel === "alpha" ? "alpha" : "beta";
+      verChan.textContent = ch;
+      verChan.classList.toggle("alpha", ch === "alpha");
+      verChan.title = "Release channel — click the version for options";
+    }
     renderVerMenu();
   }
 
@@ -6357,7 +6384,7 @@
     .catch(() => {});
   // Click outside closes it; clicks inside the menu don't.
   document.addEventListener("click", (e) => {
-    if (!verMenu.hidden && !verMenu.contains(e.target) && e.target !== verView) toggleVerMenu(false);
+    if (!verMenu.hidden && !verMenu.contains(e.target) && e.target !== verView && e.target !== verChan) toggleVerMenu(false);
   });
   autoUpdateChk.addEventListener("change", async () => {
     const enabled = autoUpdateChk.checked;
