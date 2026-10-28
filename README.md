@@ -411,18 +411,27 @@ know before opening it up:
     new device, sign in with the password, choose *use a code*, register. A
     password alone never registers a passkey — that is what stops a stolen
     password from enrolling the thief's phone.
-  - **Lost password or lost device**: another admin clicks *reset access* on your
-    row (confirming with their own passkey). Your password and every passkey are
-    removed and they hand you a fresh invitation link, on which you choose a new
-    password and register the device you have. Nobody can reset themselves. An
-    admin can also hand a member a *device code* directly. Every session opened
-    before the reset stops working — including one on the lost device; removing
-    a passkey or demoting an admin does the same.
+  - **Lost something**: another admin opens *recover access…* on your row and
+    picks what you lost (always confirming with their own passkey). Nobody can
+    recover themselves.
+    - *lost password* — one admin; you get a link (48 h), choose a new password,
+      then confirm with one of your passkeys, which are all kept;
+    - *lost passkey* — a **second admin approves** from their Security panel; you
+      then get a device code (48 h) to register a new device;
+    - *lost everything* — password and passkeys are wiped **24 hours** later, or
+      as soon as a second admin approves; you, the asker or any admin can cancel
+      it meanwhile.
+    Making or unmaking an admin also needs a second admin's approval. A device
+    code for someone who has no passkey yet is still one admin's act. Every
+    session opened before a recovery stops working — including one on the lost
+    device; removing a passkey or demoting an admin does the same.
   - While it is on, inviting, deleting an account and changing a role also ask
     the admin for their passkey.
   - **Security panel** (🛡 in the header, a badge when something is new): what
     was done to your account — invited, made admin, reset, a passkey added or
-    removed — and, for admins, the whole log. On anything you don't recognise,
+    removed, a recovery asked about you — and, for admins, the whole log, the
+    requests waiting for their approval, and their own requests with the link or
+    code to hand over once done. On anything you don't recognise,
     **This wasn't me** ends your other sessions, removes a passkey you did not
     add, and flags it to every admin. There is no mail yet: this panel is the
     channel, so keep an eye on its badge.

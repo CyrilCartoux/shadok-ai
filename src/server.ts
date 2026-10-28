@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual, createHmac } from "node:crypto";
+import { newRequest, askVerdict, approveVerdict, cancelVerdict, dueRequests, expire, upsertRequest, requestsFor, describeRequest, loadRequests, saveRequests, isOpen, REQUEST_TTL_MS, type AdminRequest, type RequestKind } from "./admin-requests.js";
 import { recordEvent, loadEvents, saveEvents, inboxFor, markSeen, notMeEffect, describeEvent, type SecEvent } from "./security-events.js";
 import { execFile, spawn as spawnChild } from "node:child_process";
 import type { IncomingMessage } from "node:http";
@@ -1326,7 +1327,11 @@ app.post("/invite/:token", (req, res) => {
   // the admin who issued it vouched for this person, which is exactly what an
   // enrollment code says. Handed straight to the page, which runs the step.
   const tfa = twoFactorOn();
-  const enroll = tfa ? newEnrollCode(Date.now(), "invitation") : undefined;
+  // Level 1 (lost password, passkeys kept): the link sets a password, then one
+  // of the KEPT passkeys must answer. A link that only set a password would be
+  // a way around the second factor for whoever intercepted it.
+  const keptPasskey = tfa && acct!.invite?.reason === "password" && !!acct!.passkeys?.length;
+  const enroll = tfa && !keptPasskey ? newEnrollCode(Date.now(), "invitation") : undefined;
   saveAccounts(
     list.map((a) =>
       a.name === acct!.name
@@ -1348,6 +1353,7 @@ app.post("/invite/:token", (req, res) => {
   recordEvent({ kind: "invite-redeemed", actor: acct!.name, target: acct!.name });
   if (tfa) {
     res.setHeader("Set-Cookie", pendingCookie(acct!.name));
+    if (keptPasskey) return res.json({ ok: true, user: acct!.name, next: "passkey" });
     return res.json({ ok: true, user: acct!.name, next: "enroll", code: enroll!.code });
   }
   // Redeeming SIGNS YOU IN. Holding the link and choosing the password is an
@@ -1909,6 +1915,7 @@ function accountAdmin(
  *  the shortest surface wins. Hashes and live invitation tokens never leave. */
 app.get("/users", (req, res) => {
   if (!accountAdmin(req, res, false)) return;
+  settleRequests();
   res.json(
     loadAccounts().map((a) => ({
       name: a.name,
@@ -1977,6 +1984,15 @@ app.post("/users/role", async (req, res) => {
     exists: list.some((a) => a.name === name),
   });
   if (!v.ok) return res.status(me?.role === "admin" ? 400 : 403).json({ error: v.error });
+  // With two-factor on, making or unmaking an admin needs a second admin: the
+  // change becomes a request, approved from the Security panel.
+  const current = list.find((a) => a.name === name);
+  if (twoFactorOn() && current && current.role !== role && (role === "admin" || current.role === "admin")) {
+    if (!(await stepUpOk(req, res, me!))) return;
+    const a = askRequest(me!, role === "admin" ? "promote" : "demote", name);
+    if (!a.ok) return res.status(400).json({ error: a.error });
+    return res.json({ ok: true, pending: true, request: { ...a.r, text: describeRequest(a.r) } });
+  }
   const now = Date.now();
   // A demotion ends the sessions that were opened as an admin: the role is
   // re-read on every request anyway, but a session that was ridden while it
@@ -2108,6 +2124,11 @@ app.post("/2fa/enroll-code", async (req, res) => {
   if (target === BOOTSTRAP_ADMIN) return res.status(400).json({ error: "the instance password cannot hold a passkey" });
   if (target !== me.name) {
     if (me.role !== "admin") return res.status(403).json({ error: "only an admin can issue a code for someone else" });
+    // A first device for someone who never had one stays a one-admin act (v1
+    // § 6). A NEW device for someone who has passkeys is a lost-passkey
+    // recovery, and that needs a second admin.
+    if (twoFactorOn() && loadAccounts().find((a) => a.name === target)?.passkeys?.length)
+      return res.status(400).json({ error: `${target} already has a passkey — use Recover access → lost passkey (a second admin approves)` });
     if (!(await stepUpOk(req, res, me))) return;
   } else if (!loadAccounts().find((a) => a.name === me.name)?.passkeys?.length) {
     return res.status(400).json({ error: "register a passkey on this device first" });
@@ -2130,9 +2151,25 @@ app.post("/2fa/enroll-code", async (req, res) => {
 app.get("/2fa/inbox", (req, res) => {
   const me = tfaPerson(req, res, false);
   if (!me) return;
+  settleRequests();
   const inbox = inboxFor(me, loadEvents());
   const line = <T extends SecEvent>(e: T) => ({ ...e, text: describeEvent(e) });
-  res.json({ aboutYou: inbox.aboutYou.map(line), log: inbox.log.map(line), badge: inbox.badge });
+  const now = Date.now();
+  const reqs = requestsFor(me, loadRequests(), now);
+  // A handover (reset link, device code) is shown to the two admins involved
+  // and nobody else: it is a way into someone's account.
+  const view = (r: AdminRequest) => {
+    const { handover, ...rest } = r;
+    const mayHand = handover && (me.name === r.by || me.name === r.approvedBy);
+    return { ...rest, text: describeRequest(r), ...(mayHand ? { handover } : {}) };
+  };
+  res.json({
+    aboutYou: inbox.aboutYou.map(line),
+    log: inbox.log.map(line),
+    waiting: reqs.waiting.map(view),
+    mine: reqs.mine.map(view),
+    badge: inbox.badge + reqs.waiting.length,
+  });
 });
 app.post("/2fa/inbox/seen", (req, res) => {
   const me = tfaPerson(req, res, true);
@@ -2160,6 +2197,7 @@ app.post("/2fa/not-me", (req, res) => {
     sessionsAfter: now,
     ...(v.removePasskey ? { passkeys: (a.passkeys ?? []).filter((p) => p.id !== v.removePasskey) } : {}),
   }));
+  if (v.cancelRequest) closeRequest(v.cancelRequest, "cancelled", me.name);
   res.setHeader("Set-Cookie", sessionCookie(me.name, !!cookieSession(req)?.mfa));
   saveEvents(events.map((e) => (e.id === ev!.id ? { ...e, disowned: true } : e)));
   recordEvent({ kind: "not-me", actor: me.name, target: me.name, about: ev!.id, detail: describeEvent(ev!) });
@@ -2167,9 +2205,164 @@ app.post("/2fa/not-me", (req, res) => {
   res.json({ ok: true, removedPasskey: !!v.removePasskey });
 });
 
+// ── Two-admin requests and recovery levels (spec 2026-10-28 §§ 4–5) ──────────
+
+/** Record what happened to a request, for its target and the log. */
+function requestEvent(r: AdminRequest, actor: string, what: string): void {
+  recordEvent({ kind: "request", actor, target: r.target, requestId: r.id, detail: `${what}: ${describeRequest(r)}` });
+}
+
+/** Close an open request (cancelled / refused). */
+function closeRequest(id: string, outcome: "cancelled" | "refused", who: string): AdminRequest | null {
+  const list = loadRequests();
+  const r = list.find((x) => x.id === id);
+  if (!r || !isOpen(r)) return null;
+  const closed = { ...r, doneAt: Date.now(), outcome, closedBy: who };
+  saveRequests(list.map((x) => (x.id === id ? closed : x)));
+  requestEvent(closed, who, outcome);
+  console.log(`2fa: ${who} ${outcome} the request ${r.kind} on ${r.target}`);
+  return closed;
+}
+
+/**
+ * Carry a request out. Returns an error (and changes nothing) when the state
+ * no longer allows it — e.g. a demotion that would now leave fewer than two
+ * admins with a passkey: the check is on the state at the moment of applying.
+ */
+function applyRequest(r: AdminRequest, approver: string | undefined): { ok: true; r: AdminRequest } | { ok: false; error: string } {
+  const now = Date.now();
+  const list = loadAccounts();
+  const target = list.find((a) => a.name === r.target);
+  if (!target) return { ok: false, error: `no such account: ${r.target}` };
+  let accounts = list;
+  let handover: AdminRequest["handover"];
+  if (r.kind === "passkey-reset") {
+    // A code that travels by hand gets 48 h, not the 10 min of a code typed
+    // from one of your own devices to the other.
+    const enroll = { ...newEnrollCode(now, r.by), expiresAt: now + REQUEST_TTL_MS };
+    accounts = list.map((a) => (a.name === r.target ? { ...a, enroll, sessionsAfter: now } : a));
+    handover = { kind: "code", value: enroll.code, expiresAt: enroll.expiresAt };
+  } else if (r.kind === "full-reset") {
+    const invite = newInvite(now);
+    accounts = list.map((a) =>
+      a.name === r.target ? { name: a.name, role: a.role, createdAt: a.createdAt, invite, sessionsAfter: now } : a,
+    );
+    handover = { kind: "link", value: `/invite/${invite.token}`, expiresAt: invite.expiresAt };
+  } else {
+    const role: Role = r.kind === "promote" ? "admin" : "member";
+    accounts = list.map((a) =>
+      a.name === r.target ? { ...a, role, ...(role === "member" ? { sessionsAfter: now } : {}) } : a,
+    );
+    const keep = keepsTwoAdminsVerdict(twoFactorOn(), accounts);
+    if (!keep.ok) return { ok: false, error: keep.error };
+  }
+  saveAccounts(accounts);
+  const done: AdminRequest = {
+    ...r,
+    ...(approver ? { approvedBy: approver } : {}),
+    doneAt: now,
+    outcome: "applied",
+    ...(handover ? { handover } : {}),
+  };
+  saveRequests(loadRequests().map((x) => (x.id === r.id ? done : x)));
+  requestEvent(done, approver ?? "the 24 h delay", "done");
+  console.log(`2fa: request ${r.kind} on ${r.target} applied${approver ? ` (approved by ${approver})` : " (24 h elapsed)"}`);
+  return { ok: true, r: done };
+}
+
+/** Expire what ran out, apply the full resets whose 24 h are over. Called by
+ *  the reads that show requests — no timer to keep alive. */
+function settleRequests(): void {
+  const now = Date.now();
+  const before = loadRequests();
+  const after = expire(before, now);
+  if (after.some((r, i) => r !== before[i])) saveRequests(after);
+  for (const r of dueRequests(after, now)) applyRequest(r, undefined);
+}
+
+/** Ask for a two-admin request. */
+function askRequest(me: { name: string; role: Role }, kind: RequestKind, target: string): { ok: true; r: AdminRequest } | { ok: false; error: string } {
+  const v = askVerdict({ actor: me, kind, target, accounts: loadAccounts() });
+  if (!v.ok) return v;
+  const now = Date.now();
+  const r = newRequest(kind, target, me.name, now);
+  saveRequests(upsertRequest(loadRequests(), r, now));
+  requestEvent(r, me.name, "asked");
+  console.log(`2fa: ${me.name} asked for ${kind} on ${target}`);
+  return { ok: true, r };
+}
+
+/**
+ * Recover someone's access — the three levels.
+ *  1 lost password, passkeys kept: one admin, a reset link at once.
+ *  2 lost passkey, password known: two admins, then a device code.
+ *  3 lost everything: a full reset, effective in 24 h or at a second admin's approval.
+ * With two-factor OFF, levels 2 and 3 have nothing to protect and act at once
+ * (a device code / the v1 reset), like before.
+ */
+app.post("/2fa/recover", async (req, res) => {
+  const me = tfaPerson(req, res, true);
+  if (!me) return;
+  const target = String(req.body?.user ?? "").trim();
+  const level = Number(req.body?.level);
+  if (![1, 2, 3].includes(level)) return res.status(400).json({ error: "level must be 1, 2 or 3" });
+  const v = resetVerdict({ actor: me, target, accounts: loadAccounts() });
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  if (!(await stepUpOk(req, res, me))) return;
+  const now = Date.now();
+  if (level === 1) {
+    if (!loadAccounts().find((a) => a.name === target)?.passwordHash)
+      return res.status(400).json({ error: `${target} has no password yet — their invitation is still open` });
+    const invite = { ...newInvite(now), reason: "password" as const };
+    updateAccount(target, (a) => {
+      const { passwordHash: _gone, ...rest } = a;
+      return { ...rest, invite, sessionsAfter: now };
+    });
+    recordEvent({ kind: "access-reset", actor: me.name, target, detail: "password only — passkeys kept" });
+    console.log(`2fa: ${me.name} reset the password of ${target} (passkeys kept)`);
+    return res.json({ ok: true, level, handover: { kind: "link", value: `/invite/${invite.token}`, expiresAt: invite.expiresAt } });
+  }
+  if (!twoFactorOn()) {
+    const r = applyRequest(newRequest(level === 2 ? "passkey-reset" : "full-reset", target, me.name, now), undefined);
+    return r.ok ? res.json({ ok: true, level, handover: r.r.handover }) : res.status(400).json({ error: r.error });
+  }
+  const a = askRequest(me, level === 2 ? "passkey-reset" : "full-reset", target);
+  if (!a.ok) return res.status(400).json({ error: a.error });
+  res.json({ ok: true, level, pending: true, request: { ...a.r, text: describeRequest(a.r) } });
+});
+
+app.post("/2fa/requests/approve", async (req, res) => {
+  const me = tfaPerson(req, res, true);
+  if (!me) return;
+  settleRequests();
+  const r = loadRequests().find((x) => x.id === String(req.body?.id ?? ""));
+  const v = approveVerdict(r, me, Date.now());
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  if (!(await stepUpOk(req, res, me))) return;
+  const done = applyRequest(r!, me.name);
+  if (!done.ok) return res.status(400).json({ error: done.error });
+  res.json({ ok: true, handover: done.r.handover ?? null });
+});
+
+/** Refuse (an admin who could approve) or cancel (the asker, any admin, or the
+ *  person concerned). No passkey needed: stopping something is always safe. */
+app.post("/2fa/requests/cancel", (req, res) => {
+  const me = tfaPerson(req, res, true);
+  if (!me) return;
+  const id = String(req.body?.id ?? "");
+  const r = loadRequests().find((x) => x.id === id);
+  const v = cancelVerdict(r, me);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const refused = me.name !== r!.by && me.name !== r!.target;
+  closeRequest(id, refused ? "refused" : "cancelled", me.name);
+  res.json({ ok: true });
+});
+
 app.post("/2fa/reset", async (req, res) => {
   const me = tfaPerson(req, res, true);
   if (!me) return;
+  // One admin wiping someone's second factor is exactly what v2 removed.
+  if (twoFactorOn()) return res.status(400).json({ error: "with two-factor on, use Recover access (a full reset needs a second admin or 24 h)" });
   const target = String(req.body?.user ?? "").trim();
   const list = loadAccounts();
   const v = resetVerdict({ actor: me, target, accounts: list });

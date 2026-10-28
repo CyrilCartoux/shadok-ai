@@ -856,6 +856,20 @@ Design and threat model: `docs/superpowers/specs/2026-10-21-passkey-2fa-design.m
   disowned passkey is removed, and a `not-me` event flags it to the admins. It
   does not lock the account — the caller is, by construction, signed in as its
   owner; the lock is for the mail link of § 7, later.
+- **Two admins for what one must not do alone** (`src/admin-requests.ts`,
+  `<key>.requests.json`): with 2FA on, a lost-passkey recovery, a full reset
+  and a promotion/demotion become requests a SECOND admin approves (never the
+  asker, never the target) from the Security panel. A full reset also takes
+  effect on its own 24 h after the ask. There is no timer: due requests are
+  applied by whoever next reads them (`settleRequests`, from `GET /users` and
+  `GET /2fa/inbox`), so a restart loses nothing. The asker, any admin or the
+  target can cancel — the target via "this wasn't me" on the notice. The
+  one-admin paths that did the same thing (v1's `/2fa/reset`, a device code for
+  someone who already has a passkey) are refused while 2FA is on. Level 1 (lost
+  password) stays one admin because it keeps the passkeys: its link
+  (`invite.reason: "password"`) sets a password and then asks for one of them,
+  through the login page's ordinary passkey step. A handover (link, code) is
+  shown only to the two admins involved.
 - **Only a person manages accounts while it is on**: `accountAdmin` and the
   `/2fa/*` routes read `cookieAccount`, which never accepts an agent's session
   key or a peer. The key IS the bootstrap admin; without this an agent could

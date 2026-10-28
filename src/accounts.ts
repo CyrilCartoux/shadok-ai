@@ -20,8 +20,10 @@ export interface Account {
   /** Absent until an invitation is redeemed. */
   passwordHash?: string;
   createdAt: number;
-  /** Present only while the invitation is outstanding. */
-  invite?: { token: string; expiresAt: number };
+  /** Present only while the invitation is outstanding. `reason: "password"`
+   *  marks a level-1 reset: the passkeys were kept, so redeeming the link sets
+   *  a password and then asks for one of them. */
+  invite?: { token: string; expiresAt: number; reason?: "password" };
   /** Registered passkeys — the second factor (see `src/twofactor.ts`). */
   passkeys?: Passkey[];
   /** An outstanding enrollment code: what lets a device register a passkey

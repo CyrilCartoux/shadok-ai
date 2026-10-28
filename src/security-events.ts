@@ -24,6 +24,7 @@ export type SecEventKind =
   | "passkey-removed"
   | "device-code"
   | "two-factor"
+  | "request"
   | "not-me";
 
 export interface SecEvent {
@@ -40,6 +41,9 @@ export interface SecEvent {
   passkeyId?: string;
   /** For a `not-me`: the event it disowns. */
   about?: string;
+  /** For a `request` event: the two-admin request it reports on, so "this
+   *  wasn't me" can cancel it while it is still open. */
+  requestId?: string;
   /** Who has opened it in the panel. */
   seenBy?: string[];
   /** Already disowned by its target — the button is spent. */
@@ -103,10 +107,14 @@ export function markSeen(events: SecEvent[], viewer: { name: string; role: strin
 export function notMeEffect(
   e: SecEvent | undefined,
   viewer: string,
-): { ok: true; removePasskey?: string } | { ok: false; error: string } {
+): { ok: true; removePasskey?: string; cancelRequest?: string } | { ok: false; error: string } {
   if (!e || !aboutYou(e, viewer)) return { ok: false, error: "no such notice for you" };
   if (e.disowned) return { ok: false, error: "already reported" };
-  return { ok: true, ...(e.kind === "passkey-added" && e.passkeyId ? { removePasskey: e.passkeyId } : {}) };
+  return {
+    ok: true,
+    ...(e.kind === "passkey-added" && e.passkeyId ? { removePasskey: e.passkeyId } : {}),
+    ...(e.requestId ? { cancelRequest: e.requestId } : {}),
+  };
 }
 
 /** One line a person reads, for the panel. */
@@ -122,6 +130,7 @@ export function describeEvent(e: SecEvent): string {
     case "passkey-removed": return `a passkey was removed from ${e.target}'s account (by ${by})`;
     case "device-code": return `${e.actor} issued a device code for ${e.target}`;
     case "two-factor": return `${e.actor} turned two-factor sign-in ${e.detail ?? ""}`.trim();
+    case "request": return e.detail ?? `a request about ${e.target}`;
     case "not-me": return `⚠ ${e.actor} reported “this wasn't me”: ${e.detail ?? ""}`.trim();
   }
 }

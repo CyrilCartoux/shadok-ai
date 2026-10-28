@@ -1841,6 +1841,9 @@
   .sec-events li.unread { border-color: var(--amber); }
   .sec-events li.flag { border-color: var(--err); }
   .sec-events .ev-text { flex: 1; min-width: 0; }
+  .sec-events li { flex-wrap: wrap; }
+  .sec-events code { flex-basis: 100%; font-size: 12px; user-select: all; word-break: break-all; color: var(--amber); }
+  .u-recover { flex-basis: 100%; display: flex; gap: 6px; margin-top: 6px; }
   .sec-events .ev-at { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
   .sec-events .ev-empty { color: var(--text-dim); border-style: dashed; }
   .sec-events button.not-me { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); font-size: 12px; }
@@ -1985,7 +1988,7 @@
      rôle et les boutons empilés les uns sous les autres. Même traitement que
      #profilesList, dont il est le frère. */
   #usersList { list-style: none; padding: 0; margin: 0 0 10px; }
-  #usersList li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; }
+  #usersList li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; }
   #usersList li:nth-child(odd) { background: rgba(255,255,255,.04); }
   #usersList .pmeta { font-size: 12px; opacity: .7; }
   #usersList button { background: none; border: 1px solid rgba(255,255,255,.15); border-radius: 5px; color: inherit; cursor: pointer; font-size: 12px; padding: 2px 8px; }
@@ -2394,6 +2397,14 @@
       <button id="securityClose" title="Close">✕</button>
     </div>
     <p class="sec-note">What was done to your account. If you don't recognise something, press <b>This wasn't me</b>: your other sessions end, a passkey you did not add is removed, and the admins are told.</p>
+    <div id="secWaitingBox" hidden>
+      <div class="label sec-sub">Waiting for you</div>
+      <ul id="secWaiting" class="sec-events"></ul>
+    </div>
+    <div id="secMineBox" hidden>
+      <div class="label sec-sub">Your requests</div>
+      <ul id="secMine" class="sec-events"></ul>
+    </div>
     <div class="label sec-sub">About you</div>
     <ul id="secAboutYou" class="sec-events"></ul>
     <div id="secLogBox" hidden>
@@ -9179,7 +9190,8 @@
       const flip = document.createElement("button");
       flip.textContent = u.role === "admin" ? "make member" : "make admin";
       flip.addEventListener("click", async () => {
-        await adminWrite("/users/role", "POST", { name: u.name, role: u.role === "admin" ? "member" : "admin" });
+        const r = await adminWrite("/users/role", "POST", { name: u.name, role: u.role === "admin" ? "member" : "admin" });
+        if (r?.pending) alert("Asked. A second admin must approve it from their Security panel (🛡).");
         renderUsers();
       });
       const del = document.createElement("button");
@@ -9192,15 +9204,34 @@
       btns.className = "u-actions";
       // Lost password or lost device: another admin resets, or hands a code
       // for a new device. Both need THIS admin's passkey, right now.
+      // Recover access: three levels, by what was lost (spec 2026-10-28 § 4).
+      // The choice opens below the row; each level asks for THIS admin's passkey.
       const reset = document.createElement("button");
-      reset.textContent = "reset access";
-      reset.title = "Lost password or device: wipe their password and passkeys, and give them a new invitation link";
-      reset.addEventListener("click", async () => {
-        if (!confirm("Reset " + u.name + "'s access?\n\nTheir password and every passkey are removed. You will get a new invitation link to hand them.")) return;
-        const r = await tfaPost("/2fa/reset", { user: u.name }, true);
-        if (r) showInvite(u.name, location.origin + r.inviteUrl);
-        renderUsers();
-      });
+      reset.textContent = "recover access…";
+      reset.title = "Lost password, lost passkey, or lost everything";
+      const levels = document.createElement("div");
+      levels.className = "u-recover";
+      levels.hidden = true;
+      const LEVELS = [
+        [1, "lost password", "Their passkeys are kept: you get a link (48 h) on which they choose a new password, then confirm with one of their passkeys."],
+        [2, "lost passkey", "A second admin must approve; then you get a code (48 h) that lets them register a new device. Their other passkeys are kept."],
+        [3, "lost everything", "Password and passkeys are wiped — in 24 h, or as soon as a second admin approves. Anyone involved can cancel it meanwhile."],
+      ];
+      for (const [level, label, what] of LEVELS) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label;
+        b.title = what;
+        b.addEventListener("click", async () => {
+          if (!confirm(u.name + " — " + label + "\n\n" + what)) return;
+          const r = await tfaPost("/2fa/recover", { user: u.name, level }, true);
+          if (!r) { alert($("tfaErr").textContent || "refused"); return; }
+          showHandover(u.name, r);
+          renderUsers();
+        });
+        levels.appendChild(b);
+      }
+      reset.addEventListener("click", () => { levels.hidden = !levels.hidden; });
       const code = document.createElement("button");
       code.textContent = "device code";
       code.title = "A 10-minute code that lets them register a passkey on a device";
@@ -9212,12 +9243,22 @@
       if (!u.pending) btns.append(code);
       if (!u.pending && u.name !== me?.name) btns.append(reset);
       btns.append(flip, del);
-      li.append(meta, btns);
+      li.append(meta, btns, levels);
       ul.appendChild(li);
     }
   }
   /** The link is the only way in and it is shown once, so it gets a block of
    *  its own: readable, selectable, and copyable without aiming at wrapped text. */
+  /** What a recovery hands over: a link, a code — or nothing yet, when a
+   *  second admin still has to approve. */
+  function showHandover(name, r) {
+    if (r.pending) return alert("Asked. A second admin must approve it from their Security panel (🛡)" +
+      (r.level === 3 ? " — or it takes effect on its own in 24 h." : "."));
+    const h = r.handover;
+    if (!h) return;
+    if (h.kind === "link") showInvite(name, location.origin + h.value);
+    else showTfaCode({ code: h.value, expiresAt: h.expiresAt }, "for " + name);
+  }
   function showInvite(name, url) {
     $("inviteWho").textContent = "Invitation for " + name + " — valid 48 hours";
     $("inviteUrl").textContent = url;
@@ -9417,6 +9458,41 @@
     }
     return li;
   }
+  /** A two-admin request: approve/refuse it (waiting for me), or follow and
+   *  cancel it (mine) — with what to hand over once it is done. */
+  function reqRow(r, approvable) {
+    const li = document.createElement("li");
+    const text = document.createElement("span");
+    text.className = "ev-text";
+    let state = "";
+    if (r.doneAt) state = { applied: "done", cancelled: "cancelled", refused: "refused", expired: "expired" }[r.outcome] || r.outcome;
+    else if (r.kind === "full-reset") state = "takes effect " + new Date(r.effectiveAt).toLocaleString() + " unless approved or cancelled";
+    else state = "waiting for a second admin";
+    text.textContent = r.text + " — " + state;
+    li.appendChild(text);
+    const act = (label, url, stepUp, cls) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      if (cls) b.className = cls;
+      b.addEventListener("click", async () => {
+        const out = await tfaPost(url, { id: r.id }, stepUp);
+        if (!out) { alert($("tfaErr").textContent || "refused"); return; }
+        if (out.handover) showHandover(r.target, { handover: out.handover });
+        renderSecurity();
+      });
+      li.appendChild(b);
+    };
+    if (approvable) { act("Approve", "/2fa/requests/approve", true); act("Refuse", "/2fa/requests/cancel", false, "not-me"); }
+    else if (!r.doneAt) act("Cancel", "/2fa/requests/cancel", false, "not-me");
+    if (r.handover) {
+      const h = document.createElement("code");
+      h.textContent = r.handover.kind === "link" ? location.origin + r.handover.value : r.handover.value;
+      h.title = "Hand this to " + r.target + " — valid until " + new Date(r.handover.expiresAt).toLocaleString();
+      li.appendChild(h);
+    }
+    return li;
+  }
   function secList(ul, rows, withNotMe, empty) {
     ul.replaceChildren(...(rows.length ? rows.map((e) => secRow(e, withNotMe)) : [Object.assign(document.createElement("li"), { className: "ev-empty", textContent: empty })]));
   }
@@ -9424,6 +9500,10 @@
     const box = await securityInbox();
     if (!box) { secList($("secAboutYou"), [], false, "couldn't load — sign in with your own account"); $("secLogBox").hidden = true; return; }
     secList($("secAboutYou"), box.aboutYou, true, "nothing has been done to your account");
+    $("secWaitingBox").hidden = !box.waiting?.length;
+    $("secWaiting").replaceChildren(...(box.waiting || []).map((r) => reqRow(r, true)));
+    $("secMineBox").hidden = !box.mine?.length;
+    $("secMine").replaceChildren(...(box.mine || []).map((r) => reqRow(r, false)));
     $("secLogBox").hidden = !box.log.length;
     secList($("secLog"), box.log, false, "");
     // Opening the panel is reading it: clear the badge (unread rows keep their
