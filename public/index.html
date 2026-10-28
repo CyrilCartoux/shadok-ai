@@ -4186,6 +4186,15 @@
   const moodOf = (t) =>
     ["needs-answer", "unread", "working"].find((m) => t.btnEl.classList.contains(m)) || null;
 
+  // A single click on a group's icon SELECTS the group (when the rail is
+  // collapsed to icons the icon is almost the whole row, so this is the primary
+  // action); a double-click opens the icon picker. The stamp has to live out
+  // here, not on the element: selecting a non-active group rebuilds the rail
+  // (renderRail keys on the active view) and replaces the very icon between the
+  // two clicks, so a native `dblclick` never fires and an element-local timer
+  // would be thrown away with it.
+  let lastIconClick = { view: null, t: 0 };
+
   function railItem({ view, icon, name, group }) {
     const members = tabsInView(view).filter((t) => !t.isMain);
     const item = document.createElement("div");
@@ -4201,7 +4210,7 @@
     ic.type = "button";
     ic.className = "rail-icon";
     ic.textContent = icon;
-    if (group) ic.title = "Change the icon";
+    if (group) ic.title = "Double-click to change the icon";
     const nm = document.createElement("span");
     nm.className = "rail-name";
     nm.textContent = name;
@@ -4230,8 +4239,18 @@
         applyView();
       });
       ic.addEventListener("click", (e) => {
+        // stopPropagation so the item's own click doesn't double-fire setView,
+        // and so the document-level close-on-click doesn't shut the picker we
+        // may be about to open with this very click.
         e.stopPropagation();
-        openIconPicker(group, ic);
+        const now = Date.now();
+        if (lastIconClick.view === view && now - lastIconClick.t < 350) {
+          lastIconClick = { view: null, t: 0 };
+          openIconPicker(group, ic);
+        } else {
+          lastIconClick = { view, t: now };
+          setView(view);
+        }
       });
       nm.addEventListener("dblclick", (e) => {
         e.stopPropagation();
