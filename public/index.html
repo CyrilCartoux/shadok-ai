@@ -180,8 +180,10 @@
     font-weight: 700;
     color: var(--text);
   }
-  header .brand::before { color: var(--amber); }
-  header .brand::before { content: "◆ "; }
+  /* The project's own Shadok is the logo (drawn by the script, see paintBrandMark). */
+  header .brand { display: inline-flex; align-items: center; gap: 6px; }
+  header .brand-mark { display: inline-flex; color: var(--amber); }
+  header .brand-mark svg { width: 26px; height: 26px; overflow: visible; }
   /* The brand name doubles as the cockpit's editable title: click to rename,
      Enter/blur commits, Escape cancels. A dashed outline + pencil on hover make
      the affordance obvious; the outline turns solid amber while editing. */
@@ -870,6 +872,132 @@
   .icon-grid:empty { display: none; }
   .icon-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 8px 2px 2px; }
   .icon-picker input { width: 100%; font-size: 13px; box-sizing: border-box; }
+
+
+  /* ── The two Shadok worlds (2026-10-28) ──────────────────
+     Dark is COSMOS — the Shadoks' night: a deep sky, a few stars, the glowing
+     rim of a planet, glass panels. Light is PAPIER — a printed comic: cream
+     paper, black ink strokes with offset shadows, Shadok yellow. Both keep the
+     structure, the motion and the per-instance accent; only the default accent
+     moves (a brighter gold at night, a printing yellow by day). */
+  :root:not([data-mode="light"]) {
+    --page: #070912;
+    --bg: rgba(14, 17, 31, 0.72);
+    --bg-raised: rgba(20, 24, 42, 0.74);
+    --bg-inset: rgba(255, 255, 255, 0.05);
+    --line: rgba(255, 255, 255, 0.08);
+    --text: #e9ecf8;
+    --text-dim: #8c93b2;
+    --ok: #5ee6a8;
+    --menu-bg: rgba(16, 19, 34, 0.88);
+    --menu-hover: rgba(255, 255, 255, 0.07);
+    --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 30px 80px rgba(0, 0, 0, 0.45);
+    --shadow-float: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 40px 100px rgba(0, 0, 0, 0.6);
+  }
+  :root:not([data-mode="light"]):not([data-theme]) { --amber: #ffc247; --phosphor: #ffd27a; }
+  :root:not([data-mode="light"]) body {
+    background:
+      radial-gradient(900px 520px at 88% 112%, color-mix(in srgb, var(--amber) 22%, transparent), transparent 60%),
+      radial-gradient(760px 420px at 6% -12%, rgba(110, 120, 255, 0.16), transparent 60%),
+      #070912;
+  }
+  /* The sky: a few stars, and the rim of a planet low on the right. Fixed and
+     behind everything, never in the way of a click. */
+  :root:not([data-mode="light"]) body::before,
+  :root:not([data-mode="light"]) body::after { content: ""; position: fixed; pointer-events: none; z-index: 0; }
+  :root:not([data-mode="light"]) body::before {
+    inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,.6), transparent),
+      radial-gradient(1px 1px at 70% 18%, rgba(255,255,255,.5), transparent),
+      radial-gradient(1.5px 1.5px at 42% 72%, rgba(255,255,255,.55), transparent),
+      radial-gradient(1px 1px at 91% 58%, rgba(255,255,255,.45), transparent),
+      radial-gradient(1px 1px at 58% 88%, rgba(255,255,255,.4), transparent),
+      radial-gradient(1px 1px at 12% 82%, rgba(255,255,255,.5), transparent),
+      radial-gradient(1.2px 1.2px at 33% 10%, rgba(255,255,255,.55), transparent),
+      radial-gradient(1px 1px at 80% 40%, rgba(255,255,255,.45), transparent);
+    animation: twinkle 6s ease-in-out infinite alternate;
+  }
+  :root:not([data-mode="light"]) body::after {
+    right: -220px; bottom: -640px; width: 980px; height: 980px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 25%, #2d2212, #0d0904 62%);
+    box-shadow: 0 0 140px color-mix(in srgb, var(--amber) 22%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--amber) 28%, transparent);
+  }
+  @keyframes twinkle { to { opacity: 0.55; } }
+  header, main { position: relative; z-index: 1; }
+  :root:not([data-mode="light"]) #tabbar,
+  :root:not([data-mode="light"]) #groupRail,
+  :root:not([data-mode="light"]) .chat-pane { backdrop-filter: blur(18px); }
+  :root:not([data-mode="light"]) .turn.user .bubble {
+    background: linear-gradient(135deg, var(--amber), color-mix(in srgb, var(--amber) 55%, #ff6a3d));
+    color: #1b1204;
+  }
+  :root:not([data-mode="light"]) button.primary {
+    background: linear-gradient(135deg, var(--amber), color-mix(in srgb, var(--amber) 55%, #ff6a3d));
+  }
+  :root:not([data-mode="light"]) header .brand-mark { filter: drop-shadow(0 0 10px color-mix(in srgb, var(--amber) 60%, transparent)); }
+
+  /* Papier. */
+  :root[data-mode="light"] {
+    --page: #f6f1e4;
+    --bg: #fffdf7;
+    --bg-raised: #fffdf7;
+    --bg-inset: #efe7d3;
+    --line: #d9cfb8;
+    --text: #141414;
+    --text-dim: #6e6757;
+    --ink: #141414;
+    --menu-bg: #fffdf7;
+    --menu-hover: #efe7d3;
+    --shadow-card: 3px 3px 0 var(--ink);
+    --shadow-float: 5px 5px 0 var(--ink);
+    --sans: "Avenir Next", "Futura", "Century Gothic", "Trebuchet MS", -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  :root[data-mode="light"]:not([data-theme]) { --amber: #f2b705; --phosphor: #b98600; }
+  :root[data-mode="light"] body { background: var(--page); }
+  :root[data-mode="light"] #tabbar,
+  :root[data-mode="light"] .chat-pane,
+  :root[data-mode="light"] .sec-panel,
+  :root[data-mode="light"] #secretsPanel { border: 2px solid var(--ink); }
+  :root[data-mode="light"] body.has-groups #groupRail { border: 2px solid var(--ink); border-right: 0; box-shadow: none; }
+  :root[data-mode="light"] .bubble { border: 2px solid var(--ink); border-radius: 14px 14px 14px 4px; }
+  :root[data-mode="light"] .turn.user .bubble { background: var(--ink); color: #fff8e1; border-radius: 14px 14px 4px 14px; }
+  :root[data-mode="light"] .turn.claude .bubble { background: var(--bg-raised); }
+  :root[data-mode="light"] #composer textarea { background: var(--bg-raised); border: 2px solid var(--ink); }
+  :root[data-mode="light"] button.primary {
+    background: var(--amber); color: var(--ink);
+    border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--ink);
+  }
+  :root[data-mode="light"] button.primary:hover { background: var(--amber); border-color: var(--ink); transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--ink); }
+  :root[data-mode="light"] #activePill { background: color-mix(in srgb, var(--amber) 45%, #fff); }
+  :root[data-mode="light"] #tweakCta { border: 2px dashed var(--ink); background: color-mix(in srgb, var(--amber) 35%, #fff); }
+  :root[data-mode="light"] #tweakCta .tweak-title { color: var(--ink); }
+  :root[data-mode="light"] header .brand-mark { color: var(--ink); }
+  :root[data-mode="light"] header .brand-name {
+    font-size: 19px; letter-spacing: -0.02em;
+    text-decoration: underline wavy var(--amber) 3px; text-underline-offset: 7px;
+  }
+  /* The motto, in a corner of the page, like a caption under a strip. */
+  #motto { display: none; }
+  :root[data-mode="light"] #motto {
+    display: block; position: fixed; right: 24px; bottom: 5px; z-index: 1;
+    font: italic 11px Georgia, "Times New Roman", serif; color: var(--text-dim); pointer-events: none;
+  }
+  @media (min-width: 641px) { :root[data-mode="light"] main { padding-bottom: 24px; } }
+  @media (max-width: 640px) { :root[data-mode="light"] #motto { display: none; } }
+
+  /* A working agent: its state dot becomes a small Shadok, pumping. A mask of
+     the project's own silhouette, so it takes the accent colour like the dot. */
+  .led.busy {
+    width: 13px; height: 15px; border-radius: 0; box-shadow: none;
+    -webkit-mask: var(--shadok-mask) center / contain no-repeat;
+    mask: var(--shadok-mask) center / contain no-repeat;
+    animation: pump 0.8s var(--ease) infinite alternate;
+  }
+  @keyframes pump { from { transform: translateY(1px) scaleY(0.94); } to { transform: translateY(-1.5px) scaleY(1.04); } }
+  :root {
+    --shadok-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='%23000'%3E%3Ccircle cx='13.8' cy='16.2' r='8.4'/%3E%3Ccircle cx='10.9' cy='7.8' r='2.6'/%3E%3Ccircle cx='16.7' cy='7.8' r='2.6'/%3E%3C/g%3E%3Cg stroke='%23000' stroke-width='1.8' stroke-linecap='round'%3E%3Cline x1='10.8' y1='23' x2='10.4' y2='30.6'/%3E%3Cline x1='16.4' y1='23' x2='16.8' y2='30.6'/%3E%3Cline x1='11.6' y1='5.4' x2='9.6' y2='2.8'/%3E%3Cline x1='16' y1='5.4' x2='18' y2='2.8'/%3E%3C/g%3E%3C/svg%3E");
+  }
 
   /* ── Motion ─────────────────────────────────────────────
      Short (120–220 ms), decelerating, transform/opacity only — it says where
@@ -2150,7 +2278,7 @@
 <body>
 
 <header>
-  <span class="brand"><span class="brand-name" id="brandName" title="Rename this cockpit">shadok-ai</span><span class="brand-edit" id="brandEdit" title="Rename this cockpit" aria-hidden="true">✎</span> <span class="ver" id="verView" title="Running version"></span><span class="ver-chan" id="verChan" aria-hidden="true"></span></span>
+  <span class="brand"><span class="brand-mark" id="brandMark" aria-hidden="true"></span><span class="brand-name" id="brandName" title="Rename this cockpit">shadok-ai</span><span class="brand-edit" id="brandEdit" title="Rename this cockpit" aria-hidden="true">✎</span> <span class="ver" id="verView" title="Running version"></span><span class="ver-chan" id="verChan" aria-hidden="true"></span></span>
   <span class="spacer"></span>
   <div class="gauge quota" id="quota5h" data-window="5h" title="5h rolling limit">
     <svg class="dial" viewBox="0 0 56 44" role="img" aria-label="5h rolling limit">
@@ -2654,6 +2782,7 @@
   </div>
 </div>
 
+<div id="motto" aria-hidden="true">“Why do it simply when you can do it in a complicated way?”</div>
 <main>
   <!-- The groups column (desktop only): a VIEW over the agents column beside it,
        which still holds the groups, their order and their members — that is what
@@ -4969,6 +5098,11 @@
       b.classList.toggle("active", b.dataset.mode === (light ? "light" : "dark"));
     }
   }
+  /** The header logo: the same Shadok as the favicon, in the accent colour. */
+  function paintBrandMark() {
+    const el = document.getElementById("brandMark");
+    if (el) el.innerHTML = `<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">${shadokInner("currentColor")}</svg>`;
+  }
   function applyMode(mode) {
     const light = mode === "light";
     const root = document.documentElement;
@@ -4977,6 +5111,7 @@
     try { localStorage.setItem("cp.mode", light ? "light" : "dark"); } catch (e) {}
     syncModeButtons();
     paint(); // the favicon tile follows --bg (safe here: user click, well after init)
+    paintBrandMark();
   }
   for (const b of document.querySelectorAll("#modeRow button")) {
     b.addEventListener("click", (e) => { e.stopPropagation(); applyMode(b.dataset.mode); });
@@ -5004,7 +5139,7 @@
    *  it (see `faviconSVG`), not a stamp on its belly. */
   const PX = 23.2, PY = 24.4; // the pump lever's fulcrum
   function shadokInner(fill, { lever = null, bob = 0 } = {}) {
-    const base = themeColor("--bg", "#14161d");
+    const base = themeColor("--page", "#14161d");
     const cx = 13.8, cy = 16.2, r = 8.4, eyeY = cy - 8.4, eyeSep = 5.8, eyeR = 2.6, pupR = 1.3;
     const shX = cx + r - 2.6, shY = cy + 1.8 + bob; // shoulder (moves with the bob)
     let fulcrum = "", leverEl = "", armEl = "";
@@ -5038,7 +5173,7 @@
     );
   }
   function faviconWrap(inner, ground) {
-    const base = ground || themeColor("--bg", "#14161d");
+    const base = ground || themeColor("--page", "#14161d");
     return (
       "data:image/svg+xml," +
       encodeURIComponent(
@@ -5062,7 +5197,7 @@
   function faviconSVG(symbol, symColor) {
     const accent = themeColor("--amber", "#f0a848");
     if (!symbol) return faviconWrap(shadokInner(accent));
-    const base = themeColor("--bg", "#14161d");
+    const base = themeColor("--page", "#14161d");
     const inner =
       `<g opacity="0.18">${shadokInner(base)}</g>` +
       `<text x="16" y="23.5" font-family="ui-monospace, monospace" font-size="${GLYPH_SIZE}"` +
@@ -5108,7 +5243,7 @@
   const BREATHE = 0.7;
   function faviconPumpingSVG(phase) {
     const accent = themeColor("--amber", "#f0a848");
-    const base = themeColor("--bg", "#14161d");
+    const base = themeColor("--page", "#14161d");
     const lift = themeColor("--text-dim", "#7d8293");
     const p = (Math.sin((phase / PUMP_FRAMES) * 2 * Math.PI - Math.PI / 2) + 1) / 2; // 0..1..0
     return faviconWrap(shadokInner(accent, pumpPose(p)), mixHex(base, lift, p * BREATHE));
@@ -5212,7 +5347,7 @@
   window.addEventListener("focus", repaintOnReturn);
   window.addEventListener("blur", repaintOnReturn);
   // The bridge is ready by DOMContentLoaded: paint once for real.
-  document.addEventListener("DOMContentLoaded", () => paint());
+  document.addEventListener("DOMContentLoaded", () => { paint(); paintBrandMark(); });
 
   // Sound: a short two-note chime via Web Audio (no asset). Muted pref persists.
   let muted = localStorage.getItem("cp.muteNotif") === "1";
