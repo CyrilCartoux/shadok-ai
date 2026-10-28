@@ -3665,7 +3665,10 @@ function startContentTail(s: Live): void {
       // `at` = when the block was WRITTEN, not when it was read (see
       // TailEvent): the client shows it as is instead of dating everything on
       // reception.
-      broadcast(s, { type: "stream-text", text: e.text, at: e.at, afterInternal });
+      broadcast(s, { type: "stream-text", text: e.text, at: e.at, afterInternal, ...(e.uuid ? { msgId: e.uuid } : {}) });
+    } else if (e.kind === "prompt") {
+      // The echoed prompt bubble learns its transcript id (see TailEvent).
+      broadcast(s, { type: "prompt-id", msgId: e.uuid, text: e.text });
     } else if (e.kind === "tool")
       broadcast(s, {
         type: "stream-tool", id: e.id, name: e.name, summary: e.summary,
@@ -3692,7 +3695,7 @@ function startContentTail(s: Live): void {
         s.contextPct = pct;
         broadcast(s, { type: "context", pct });
       }
-    } else
+    } else if (e.kind === "result")
       broadcast(s, {
         type: "stream-result",
         toolUseId: e.toolUseId,

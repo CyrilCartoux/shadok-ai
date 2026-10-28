@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { toolFiles } from "./download.js";
+import { classifyUserLine } from "./prompt-kind.js";
 
 /** Token counts of one assistant API message (`message.usage` in the .jsonl). */
 export interface TokenUsage {
@@ -29,7 +30,9 @@ export type TailEvent =
   // of gluing it to the block before: without it, "text · <think> · text"
   // renders as two bubbles under one label and reads as a single message, with
   // no sign the agent paused to reason in between (the reported confusion).
-  | { kind: "text"; text: string; at?: number; afterInternal?: true }
+  // `uuid` is the transcript line's own id — what a link to a message names
+  // (`msgId` on the wire). The same line replays with it in `HistoryTurn.ids`.
+  | { kind: "text"; text: string; at?: number; afterInternal?: true; uuid?: string }
   // `id`/`toolUseId` let a consumer pair an output with the call that produced
   // it. Necessary because one assistant message may carry several tool_use
   // blocks (parallel calls) whose results come back batched and out of order.
@@ -44,7 +47,14 @@ export type TailEvent =
   | { kind: "silent"; at?: number }
   /** A shell-mode exchange (`!` in the pane): the command, then its output.
    *  User messages the TUI writes itself — see `parseBashMessage`. */
-  | { kind: "bash"; command?: string; output?: string; isError?: boolean; at?: number };
+  | { kind: "bash"; command?: string; output?: string; isError?: boolean; at?: number }
+  /** A VISIBLE human prompt reached the transcript. Its text is NOT carried: the
+   *  server echoed it before it was written. It carries its `uuid` so the client
+   *  can stamp that echoed bubble and offer a link to it, and its display `text`
+   *  so the client stamps it only on the bubble that shows the SAME words — a
+   *  prompt typed in the terminal view has no bubble, and must not lend its id
+   *  to the next one. Same filter as the replay (`classifyUserLine`). */
+  | { kind: "prompt"; uuid: string; text: string; at?: number };
 
 /** Max characters of a tool result to stream (long outputs are truncated). */
 const MAX_RESULT = 4000;
@@ -384,7 +394,13 @@ export function parseLine(line: string): TailEvent[] {
           pendingInternal = true;
           continue;
         }
-        out.push({ kind: "text", text: block.text, ...(pendingInternal ? { afterInternal: true } : {}), ...when });
+        out.push({
+          kind: "text",
+          text: block.text,
+          ...(pendingInternal ? { afterInternal: true } : {}),
+          ...(typeof e.uuid === "string" ? { uuid: e.uuid } : {}),
+          ...when,
+        });
         pendingInternal = false;
       } else if (block?.type === "tool_use" && typeof block.name === "string") {
         // A SendUserFile delivers files to the user; carry their paths so the
@@ -416,8 +432,13 @@ export function parseLine(line: string): TailEvent[] {
       out.push({ kind: "bash", ...bash, ...when });
       return out;
     }
+    const line = typeof e.uuid === "string" ? classifyUserLine(e) : null;
+    if (line?.kind === "prompt") {
+      out.push({ kind: "prompt", uuid: e.uuid, text: line.text, ...when });
+      return out;
+    }
     // User events carry tool results (command output, file reads…). The real
-    // user prompt is echoed by the server itself, so only results are emitted.
+    // user prompt is echoed by the server itself, so only its id is emitted.
     for (const block of Array.isArray(e.message.content) ? e.message.content : []) {
       if (block?.type !== "tool_result") continue;
       const text = resultText(block.content);
