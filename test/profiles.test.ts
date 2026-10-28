@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   profileArgs,
   READONLY_DENY,
+  COCKPIT_DENY,
+  CROSS_SESSION_DENY,
   envVarsNote,
   DEFAULT_PROFILES,
   seedMissingPlan,
@@ -24,17 +26,20 @@ import { normalizeVault, secretsFor, secretWriteVerdict } from "../src/secrets.j
  * The args a PROFILE contributes, with the cockpit's own baseline removed.
  *
  * Every agent now carries `--settings` whether or not it has a profile, because
- * artifacts are denied cockpit-wide (`COCKPIT_DENY`) rather than per role — a
+ * the cockpit's own baselines are denied cockpit-wide rather than per role — a
  * per-role rule would miss `Shadok-dev`, which has no deny list, and an agent
- * spawned with no profile at all. These assertions are about the profile's own
- * contribution, so they strip that baseline instead of restating it eight times.
+ * spawned with no profile at all. That baseline is `COCKPIT_DENY` (artifacts)
+ * plus `CROSS_SESSION_DENY` (ListAgents/SendMessage). These assertions are about
+ * the profile's own contribution, so they strip the baseline instead of
+ * restating it in every case.
  */
+const BASELINE_DENY = new Set<string>([...COCKPIT_DENY, ...CROSS_SESSION_DENY]);
 function profileOnly(...args: Parameters<typeof profileArgs>): string[] {
   const out = profileArgs(...args);
   const i = out.indexOf("--settings");
   if (i < 0) return out;
   const settings = JSON.parse(out[i + 1]);
-  const deny = (settings.permissions?.deny ?? []).filter((d: string) => d !== "Artifact");
+  const deny = (settings.permissions?.deny ?? []).filter((d: string) => !BASELINE_DENY.has(d));
   const allow = settings.permissions?.allow ?? [];
   const rest = [...out.slice(0, i), ...out.slice(i + 2)];
   return deny.length || allow.length
@@ -57,6 +62,34 @@ test("the cockpit denies artifacts for EVERY agent, profile or not", () => {
   const ro = profileArgs({ name: "ro", deny: ["Bash(git push:*)"] });
   const deny = JSON.parse(ro[ro.indexOf("--settings") + 1]).permissions.deny;
   assert.ok(deny.includes("Artifact") && deny.includes("Bash(git push:*)"));
+});
+
+test("the cockpit denies cross-session messaging for EVERY agent, ungated", () => {
+  // Claude Code's ListAgents/SendMessage reach every other session on the
+  // machine (and, via Remote Control, the account's sessions elsewhere); shadok
+  // drives agent-to-agent work through its own server, so this is off by
+  // default. Like the artifact deny, it lands on `Shadok-dev` and bare spawns.
+  const denyOf = (args: string[]): string[] =>
+    JSON.parse(args[args.indexOf("--settings") + 1]).permissions.deny;
+  for (const p of [null, { name: "x" }, { name: "dev", systemPrompt: "code" }]) {
+    const deny = denyOf(profileArgs(p as never));
+    assert.ok(deny.includes("SendMessage") && deny.includes("ListAgents"));
+  }
+  // Unlike COCKPIT_DENY, SHADOK_ALLOW_ARTIFACTS must NOT lift it: the artifact
+  // gate has nothing to do with messaging.
+  const prev = process.env.SHADOK_ALLOW_ARTIFACTS;
+  process.env.SHADOK_ALLOW_ARTIFACTS = "1";
+  try {
+    const deny = denyOf(profileArgs(null));
+    assert.ok(!deny.includes("Artifact"), "the artifact gate should lift COCKPIT_DENY");
+    assert.ok(
+      deny.includes("SendMessage") && deny.includes("ListAgents"),
+      "but never the cross-session baseline",
+    );
+  } finally {
+    if (prev === undefined) delete process.env.SHADOK_ALLOW_ARTIFACTS;
+    else process.env.SHADOK_ALLOW_ARTIFACTS = prev;
+  }
 });
 
 test("profileArgs: empty/undefined profile → no extra args", () => {

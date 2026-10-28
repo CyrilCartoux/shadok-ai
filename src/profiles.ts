@@ -390,6 +390,27 @@ export function removeProfile(name: string): void {
  */
 export const COCKPIT_DENY = ["Artifact"] as const;
 
+/**
+ * Denied for EVERY agent, whatever its role, and — unlike `COCKPIT_DENY` — NOT
+ * lifted by any gate. A cockpit policy, not a guardrail, and deliberately a
+ * SEPARATE constant: `SHADOK_ALLOW_ARTIFACTS` is about the Artifact tool and
+ * must never, as a side effect, reopen cross-session messaging.
+ *
+ * Claude Code's cross-session messaging (`ListAgents` / `SendMessage`) lets any
+ * agent DISCOVER and MESSAGE every other Claude session on this machine and,
+ * when Remote Control is connected, the account's sessions on other machines and
+ * in the cloud. shadok already drives agent-to-agent work through its OWN server
+ * (pilotctl, over the WebSocket — which these denies do NOT touch), so the
+ * capability is redundant here and off by default.
+ *
+ * Two consequences, both accepted: denying `SendMessage` also removes an agent's
+ * messaging to its own subagents / team teammates (same tool), and `ListAgents`
+ * removes discovery. Here rather than in the roles' `deny` for the same reasons
+ * as `COCKPIT_DENY`: `Shadok-dev` and a profile-less spawn carry no deny list,
+ * and `profileBadges` would otherwise mislabel a full-access role as restricted.
+ */
+export const CROSS_SESSION_DENY = ["SendMessage", "ListAgents"] as const;
+
 export function profileArgs(
   profile?: Profile | null,
   modelOverride?: string | null,
@@ -398,6 +419,7 @@ export function profileArgs(
   const args: string[] = [];
   if (profile?.systemPrompt?.trim()) args.push("--append-system-prompt", profile.systemPrompt.trim());
   const deny = [
+    ...CROSS_SESSION_DENY,
     ...(process.env.SHADOK_ALLOW_ARTIFACTS === "1" ? [] : COCKPIT_DENY),
     ...(profile?.deny ?? []),
   ];
