@@ -1,4 +1,4 @@
-# Two-factor v2 — recovery levels, two-admin approvals, email notices — design
+# Two-factor v2 — recovery levels, two-admin approvals, a Security panel — design
 
 Follows `2026-10-21-passkey-2fa-design.md` (shipped as #280). That version made
 a stolen password useless on its own. This one closes what is left around it:
@@ -13,13 +13,13 @@ point is read:
 | Decided | Reading |
 |---|---|
 | Synced passkeys accepted | Unchanged from v1: any passkey with user verification. iCloud / Google sync is the normal case, not an exception. |
-| Email is a notification channel with a "this wasn't me" button, **not a factor** | An address on each account; every sensitive event mails the person concerned. A mail never grants access by itself: a link in it only does what an admin already decided, or blocks. |
+| Email is a notification channel with a "this wasn't me" button, **not a factor** | **No sender exists yet** (answered 2026-10-28), so v2 ships the channel IN THE COCKPIT: a *Security* panel with every notice and every pending action, and the "this wasn't me" button there (§ 6). Email is a second delivery of the same notices, added once a sender exists (§ 7) — never a factor: a mail link only does what an admin already decided, or blocks. |
 | An admin never sets a password | Already true (invitation links). Kept, and extended to every reset. |
 | A fresh passkey for every admin action | Today only reset, enrollment codes, passkey deletion and the 2FA switch ask for one. Inviting, deleting an account and changing a role do not. All of them will. |
 | 2 admins to promote/demote an admin and for the bypass | A second admin approves, with their own passkey. "The bypass" = the immediate full reset (below). |
 | Lost password → a link sent by 1 admin | Level 1. Passkeys are kept. |
 | Lost passkey, password known → 2 admins approve, then a link | Level 2. |
-| Lost everything → full reset effective after 24 h, or at once if a 2nd admin approves | Level 3. Cancellable from the mail during the 24 h. |
+| Lost everything → full reset effective after 24 h, or at once if a 2nd admin approves | Level 3. Cancellable during the 24 h by the target or any other admin. |
 | No mandatory second passkey | Unchanged. |
 | No emergency procedure | Unchanged: shell on the machine ("we call Gnarco"), v1 § 8. |
 
@@ -28,18 +28,18 @@ Plus two gaps found while reading the code, both in the same spirit:
 - **A reset does not end the sessions already open.** The cookie carries no
   version of the account, so a session stolen before the reset stays valid
   after it, and a lost phone that was signed in stays signed in.
-- **Invitations last 7 days.** Down to 48 h: with email they no longer need to
-  survive a slow hand-over by another channel.
+- **Invitations last 7 days.** Down to 48 h.
 
 Success:
 - a lost password is fixed by one admin, and the person keeps their passkeys;
 - one admin alone (or someone riding their session) can no longer strip
   anyone's second factor, nor make anyone admin;
-- every reset, new device, invitation and promotion reaches the person's
-  mailbox, and "this wasn't me" stops it;
+- every reset, new device, invitation and promotion is shown to the person
+  concerned and to the admins in one place, with what is waiting on whom, and
+  "this wasn't me" stops it;
 - after any reset, every session opened before it is dead;
-- with no mail configured, everything still works as today, links handed over
-  by the admin.
+- with no mail sender (the case today), all of it works; links are handed over
+  by the admin, as now.
 
 ## Threat model
 
@@ -49,14 +49,19 @@ Same boundary as v1: anything running as the machine's OS user is out of scope
 - **one compromised admin** (password + their phone, or a ridden session) —
   can no longer reset someone's passkeys, promote an accomplice or demote a
   defender without a second admin;
-- **a recovery request made behind the user's back** — the user is mailed and
-  can block it;
+- **a recovery request made behind the user's back** — the user and every
+  other admin see it in the Security panel and can stop it;
 - **a stolen session** — dies at the next reset or block.
 
-Not addressed: a compromised mailbox. It can press "this wasn't me" (a denial
+The honest limit without mail: a notice only protects someone who opens the
+cockpit. The 24 h of level 3 are worth what the other admins' attention is
+worth — which is why every admin sees, and may cancel, a pending full reset,
+not only its target. Email (§ 7) widens that to people who are not looking.
+
+Once mail exists, a compromised mailbox can press "this wasn't me" (a denial
 of service an admin undoes) and read a level-1 link — which still needs the
-passkey the attacker does not have, since level 1 keeps it. That is the
-point of email not being a factor.
+passkey the attacker does not have, since level 1 keeps it. That is the point
+of email not being a factor.
 
 ## Design
 
@@ -82,7 +87,7 @@ interface AdminRequest {
   createdAt: number;
   approvedBy?: string;                            // the second admin
   effectiveAt?: number;                           // full-reset: createdAt + 24 h
-  cancelToken: string;                            // the mail's "this wasn't me"
+  cancelToken: string;                            // "this wasn't me" from a mail (§ 7, later)
   done?: number;
 }
 ```
@@ -90,12 +95,10 @@ interface AdminRequest {
 At most one open request per (target, kind); a new one replaces it. An
 unapproved request expires after 48 h. Done/expired rows are pruned on write.
 
-Mail settings, per instance like `cockpitTitle`: `mail?: Record<cwd, { from:
-string; publicUrl: string }>` in `config.json`, and the SMTP URL in the vault
-as `SHADOK_SMTP_URL` (`smtps://user:pass@host:465`), read by the server, never
-handed to an agent's env unless a profile attaches it. `publicUrl` is needed
-because a mail link must work from outside: the request's `Host` behind a
-proxy is not reliably the public name.
+Events for the Security panel: § 6. Mail settings, later: § 7.
+
+Below, "**notified**" means: an event in the Security panel for the target
+(and the admins where stated) — and a mail too, once § 7 exists.
 
 ### 2. Sessions die with a reset
 
@@ -124,39 +127,41 @@ which asks which case it is) and are refused on oneself (v1 rule).
 
 **Level 1 — lost password, passkeys kept.** One admin, fresh passkey. The
 password hash is removed, a reset link `/invite/<token>` (48 h) is issued and
-mailed; the passkeys stay. Redeeming sets a new password — and, with 2FA on,
+shown to the admin to hand over; the target is notified; the passkeys stay. Redeeming sets a new password — and, with 2FA on,
 the redeemer must then pass a **passkey assertion** with one of the kept
 passkeys before the session is issued. A link that only sets a password would
-otherwise be a way around the second factor for whoever reads the mail.
+otherwise be a way around the second factor for whoever intercepts it.
 `sessionsAfter = now` at issue.
 
 **Level 2 — lost passkey, password known.** Admin A asks (fresh passkey) →
-request `passkey-reset`, the target is mailed ("an admin asked to let you
-register a new device") with "this wasn't me". Admin B ≠ A, ≠ target approves
-(fresh passkey). On approval: an enrollment code is minted (v1 § 4, but 48 h
-since it travels by mail) and mailed; the existing passkeys are kept (the user
+request `passkey-reset`, the target is notified ("an admin asked to let you
+register a new device"), the other admins see it in *Waiting for you*. Admin
+B ≠ A, ≠ target approves (fresh passkey). On approval: an enrollment code is
+minted (v1 § 4, but 48 h, since it is handed over by another channel) and
+shown to both admins; the existing passkeys are kept (the user
 deletes the lost one from their list once in, or an admin does);
 `sessionsAfter = now`. Password + code → register → session `mfa=1`, the v1
 enroll path unchanged.
 
 **Level 3 — lost everything.** Admin A asks (fresh passkey) → request
-`full-reset`, `effectiveAt = now + 24 h`, target mailed with the date and
-"this wasn't me — cancel". Until then nothing changes on the account. Then:
+`full-reset`, `effectiveAt = now + 24 h`; the target and every admin are
+notified with the date, and any of them may cancel. Until then nothing
+changes on the account. Then:
 
 - admin B approves (fresh passkey) → effective at once (the "bypass");
 - or `effectiveAt` passes → effective on the next action that reads it.
 
-No timer: the request is *applied* when an admin opens the Users panel or
-asks for the link (`GET /users` applies due requests), so a restart loses
+No timer: the request is *applied* when an admin opens the Users or Security
+panel or asks for the link (both reads apply due requests), so a restart loses
 nothing and there is no scheduler to keep alive. Applying = password and
-passkeys removed, `sessionsAfter = now`, a reset link issued (48 h), mailed and
-shown to admin A to hand over if the mailbox is lost too. Redeeming it asks for
+passkeys removed, `sessionsAfter = now`, a reset link issued (48 h) and shown
+to admin A to hand over. Redeeming it asks for
 a password then registers a passkey (the v1 invitation path with 2FA on).
 
 ### 5. Promote / demote an admin
 
 With 2FA **on**: admin A asks (fresh passkey) → request `promote`/`demote`;
-admin B approves (fresh passkey) → applied, target mailed. `keepsTwoAdmins`
+admin B approves (fresh passkey) → applied, target notified. `keepsTwoAdmins`
 (v1) still refuses a demotion that would leave fewer than 2 admins with a
 passkey — checked at approval, on the state at that moment.
 
@@ -165,43 +170,75 @@ step that creates the second admin, and 2FA cannot be switched on before two
 exist anyway (v1 § 6), so the two-admin rule is in force exactly when it can be
 satisfied.
 
-### 6. Email
+### 6. The Security panel — notices and pending actions
 
-**Events** (to the target unless stated): invitation (with the link), each
-recovery level asked / approved / effective / cancelled, a new passkey
-registered (label + time), a passkey deleted, promoted / demoted, account
-blocked (to the user **and** every admin), own email changed (to the **old**
-address).
+One place, in the cockpit, for everything this design makes happen. A header
+icon (beside Users) with a badge counting what **needs you**; the panel has
+four parts:
 
-**"This wasn't me"** — every mail but the invitation carries
-`<publicUrl>/alert/<cancelToken-or-account-token>`. Reachable without a
-session, like `/invite`. One click shows what it will do; confirming:
+- **Waiting for you** (admins) — requests another admin made that you may
+  approve: level 2, the level-3 bypass, a promotion or demotion. *Approve* /
+  *Refuse*, each with a fresh passkey. Your own requests never appear here (you
+  cannot approve yourself).
+- **Your requests** — what you asked, its state (waiting for a second admin,
+  level-3 countdown to its effective time), *Cancel*.
+- **About you** (everyone) — notices concerning your account: a recovery
+  asked / approved / effective / cancelled, a passkey registered or deleted, a
+  promotion or demotion. Each carries **This wasn't me**. Unread until opened.
+- **Security log** (admins) — every event, newest first: who, what, on whom,
+  when. The audit trail a second admin needs to judge a request.
 
-- cancels the open request it came from;
-- sets `locked` and `sessionsAfter = now` on the account;
-- mails every admin.
+**Events** are one list, written by the routes that do the thing:
+`~/.shadok-ai/users/<key>.events.json` (600), `{ id, at, kind, actor, target,
+requestId?, label? }`, bounded (last 500 or 90 days). Read state is per
+viewer (`seenBy`). `GET /2fa/inbox` returns the four parts for the caller; the
+badge is fetched on load and every 60 s — notices are not chat, a minute is
+fine.
 
-A locked account cannot sign in. An admin unlocks it (fresh passkey); the user
-is mailed. Single-use token, 7 days, refused with one wording whatever is wrong
-(like `redeemVerdict`).
+**This wasn't me**, from the panel (so from a signed-in person):
 
-**Addresses.** Set by the admin at invitation; afterwards changed only by the
-user themself, with a fresh passkey, the old address notified. An admin cannot
-change someone else's address: it is where that person's alarms go, and
-redirecting it would be the first move of a compromised admin.
+- on a request: cancels it;
+- on a passkey registered: deletes that passkey;
+- in every case: `sessionsAfter = now` on the account — every OTHER session
+  dies, this one is re-issued — and a *flagged* event reaches every admin.
 
-**Transport.** `nodemailer` over the SMTP URL. A send never blocks the action:
-a failure is logged by event type and recipient domain (never the link) and
-the panel shows "mail not sent — hand this link over yourself", which is
-exactly today's behaviour. No mail configured = that message every time, and
-no "this wasn't me" (nothing to click). The panel says mail is off.
+From a mail link (§ 7, later), where the clicker has no session, it also sets
+`locked`: whoever clicks may be the only one who knows the account is taken.
 
-### 7. Invitations
+A locked account cannot sign in; an admin unlocks it (fresh passkey).
 
-`INVITE_TTL_MS` → 48 h. An invitation can carry an address; with mail on, it
-is sent; the link is still shown to the admin.
+**Who sees level 3**: the target and every admin, and every admin may cancel
+it — not only the two involved. Same for a block: every admin.
 
-### 8. Pure rules (tested)
+### 7. Email — later, once a sender exists
+
+No sending account exists today, so v2 ships without mail; the panel is the
+channel. When one is configured, the same events are ALSO mailed, and nothing
+else changes:
+
+- **Addresses.** `email` on the account, set by the admin at invitation;
+  afterwards changed only by the user themself (fresh passkey), the old
+  address notified. An admin cannot change someone else's: it is where that
+  person's alarms go.
+- **What is mailed**: each event of § 6 to its target; a block to every admin;
+  the invitation and reset links to their recipient.
+- **"This wasn't me" by mail**: `<publicUrl>/alert/<token>`, reachable without
+  a session like `/invite`, single use, 7 days, one wording for every refusal;
+  same effect as from the panel, plus `locked` (§ 6).
+- **Transport**: `nodemailer` over `SHADOK_SMTP_URL` (vault), sender and
+  `publicUrl` per instance in `config.json`. A send never blocks the action; a
+  failure is logged by event and recipient domain (never the link) and the
+  admin is shown the link to hand over — today's behaviour.
+
+Storing `email` can ship with v2 (the invitation form asks for it, optional),
+so addresses are there when sending starts.
+
+### 8. Invitations
+
+`INVITE_TTL_MS` → 48 h. The link is shown to the admin, as today (and mailed
+too, once § 7 exists).
+
+### 9. Pure rules (tested)
 
 In `src/twofactor.ts`, beside v1's verdicts:
 
@@ -210,25 +247,23 @@ In `src/twofactor.ts`, beside v1's verdicts:
   already approved, not expired;
 - `requestDue(request, now)` — level 3's clock;
 - `sessionAlive({ issuedAt }, account)` — the `sessionsAfter` / `locked` rule;
-- `alertVerdict(token, rows, now)` — the "this wasn't me" link.
+- `inboxFor(viewer, events, requests, now)` — the four parts of the panel and
+  the badge count;
+- `notMeEffect(event)` — what "this wasn't me" undoes for each kind.
 
-The mail transport is injected (`sendMail` function), so the routes are tested
-with a recording fake; end-to-end uses nodemailer's `jsonTransport` selected by
-`SHADOK_MAIL_TRANSPORT=json`, writing the mails to a directory the test reads —
-no network, no real SMTP.
+When mail lands (§ 7), its transport is injected (`sendMail`), tested with a
+recording fake and end-to-end with nodemailer's `jsonTransport` — no network.
 
 ## Rollout
 
-Nothing changes for an instance until it configures mail **and** turns 2FA on,
-except: the 48 h invitations, the step-ups on invite/delete/role (2FA on only),
-and `sessionsAfter` on resets — all three strictly tighter. Accounts with no
-address keep working; the panel nags admins to add one at the next invitation
-and lets each user add their own.
+The recovery levels and two-admin rules apply once 2FA is on. Otherwise only
+these change, all strictly tighter: 48 h invitations, `sessionsAfter` on
+resets, and the Security panel (which also logs what happens with 2FA off).
 
 Verification before merge: Chromium with a CDP virtual authenticator (as v1),
-three admins, each level run to completion and once cancelled from the mail;
-a session opened before a reset proved dead after it; mail off proved to
-behave like today.
+three admins, each level run to completion and once stopped by "this wasn't
+me" from the panel; a level-3 request cancelled by a third admin; a session
+opened before a reset proved dead after it.
 
 ## Out of scope
 
@@ -236,10 +271,10 @@ Email as a factor or a magic-link sign-in; SMS; recovery codes; a mandatory
 second passkey; per-event mail preferences; an emergency path beyond the shell
 on the machine.
 
-## Open questions
+## Decided since the first draft (2026-10-28)
 
-1. **Mail provider.** The design takes any SMTP URL. Which account sends
-   (Google Workspace, a transactional service)? Needs a sender address the
-   recipients' filters accept.
-2. **Who gets level-3 notices besides the target** — every admin, or only the
-   two involved? The design says the target, plus every admin on a block.
+1. **Mail provider: none for now.** Hence the Security panel as the channel
+   (§ 6) and email deferred (§ 7).
+2. **Level-3 notices**: the target and every admin; every admin may cancel.
+3. **A place for pending actions**, asked by the requester: the Security
+   panel's *Waiting for you* and *Your requests*.
