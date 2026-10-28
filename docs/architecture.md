@@ -844,6 +844,18 @@ Design and threat model: `docs/superpowers/specs/2026-10-21-passkey-2fa-design.m
   cookie) and a demotion. Redeeming the reset link keeps it, or the new
   password would bring a stolen pre-reset session back. Invitations last 48 h.
   Design of the rest of v2: `docs/superpowers/specs/2026-10-28-2fa-v2-recovery-design.md`.
+- **The Security panel is the notification channel** (no mail sender exists).
+  Every account and second-factor write records an event
+  (`src/security-events.ts`, `~/.shadok-ai/users/<key>.events.json`, bounded to
+  500 rows / 90 days; recording never fails the action). `GET /2fa/inbox` gives
+  a person what concerns them (`aboutYou`: what others did to them, plus every
+  passkey change even "by themselves" — whoever holds their password and a code
+  IS them to the server) and gives admins the whole log; the badge counts
+  unread notices and unread flags. `POST /2fa/not-me` is "this wasn't me":
+  every other session ends (`sessionsAfter`, the caller's cookie re-issued), a
+  disowned passkey is removed, and a `not-me` event flags it to the admins. It
+  does not lock the account — the caller is, by construction, signed in as its
+  owner; the lock is for the mail link of § 7, later.
 - **Only a person manages accounts while it is on**: `accountAdmin` and the
   `/2fa/*` routes read `cookieAccount`, which never accepts an agent's session
   key or a peer. The key IS the bootstrap admin; without this an agent could

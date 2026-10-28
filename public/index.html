@@ -1826,6 +1826,24 @@
      cockpit uses 6 — i.e. a grey and a white that existed nowhere else. The amber
      rule on top follows the instruments' grammar (active tab edge, lit ⌨️): this
      panel is in the foreground. */
+  #securityBtn { position: relative; }
+  .sec-badge {
+    position: absolute; top: -5px; right: -5px;
+    min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+    background: var(--err); color: #fff; font-size: 10px; line-height: 15px; font-weight: 600;
+  }
+  .sec-sub { margin: 14px 0 6px; }
+  .sec-events { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .sec-events li {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px;
+  }
+  .sec-events li.unread { border-color: var(--amber); }
+  .sec-events li.flag { border-color: var(--err); }
+  .sec-events .ev-text { flex: 1; min-width: 0; }
+  .sec-events .ev-at { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+  .sec-events .ev-empty { color: var(--text-dim); border-style: dashed; }
+  .sec-events button.not-me { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); font-size: 12px; }
   #secretsPanel, .sec-panel {
     background: var(--bg-raised); color: var(--text);
     width: min(560px, 100%); max-height: min(80vh, 760px); overflow: auto;
@@ -2065,6 +2083,9 @@
   <button id="secretsBtn" class="icon" title="Repo secrets (injected as env)" aria-label="Secrets"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><circle cx="8.5" cy="8.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 11l7.5 7.5M15.5 15.5l1.8-1.8M17.8 17.8l1.7-1.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   <button id="ledgerBtn" class="icon" title="Shared ledger — what agents have resolved / decided" aria-label="Ledger"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><rect x="5" y="3.5" width="14" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
   <button id="profilesBtn" class="icon" title="Agent profiles (role + guardrails + secrets)" aria-label="Profiles"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+  <!-- Security: what was done to accounts and second factors, and "this wasn't
+       me". Kept out of the ⋯ overflow on a phone: its badge is the point. -->
+  <button id="securityBtn" class="icon" title="Security — what happened to your account" aria-label="Security" hidden><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span id="securityBadge" class="sec-badge" hidden></span></button>
   <button id="usersBtn" class="icon" title="Users — accounts for this instance" aria-label="Users" hidden><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 19a6 6 0 0 1 12 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M16 6.2a3.2 3.2 0 0 1 0 6.1M17.5 19a6 6 0 0 0-2.2-4.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
   <button id="telegramBtn" class="icon" title="Configure the Telegram bot (token, on/off, allowed chats)"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><path fill="#26A5E4" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></button>
   <button id="muteNotif" class="icon" title="Mute the notification sound" aria-label="Notification sound"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><path d="M6 16.5h12c-1.3-1.1-2-2.7-2-4.5v-1.2a4 4 0 0 0-8 0v1.2c0 1.8-.7 3.4-2 4.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10.4 19a1.7 1.7 0 0 0 3.2 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line class="mute-slash" x1="4.5" y1="4.5" x2="19.5" y2="19.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
@@ -2362,6 +2383,22 @@
       <button id="profConfirmCancel">Cancel</button>
       <button id="profConfirmSave">Save only</button>
       <button class="primary" id="profConfirmRestart">Restart now</button>
+    </div>
+  </div>
+</div>
+
+<div id="securityOverlay" class="overlay" hidden>
+  <div class="sec-panel">
+    <div class="sec-head">
+      <strong>Security</strong>
+      <button id="securityClose" title="Close">✕</button>
+    </div>
+    <p class="sec-note">What was done to your account. If you don't recognise something, press <b>This wasn't me</b>: your other sessions end, a passkey you did not add is removed, and the admins are told.</p>
+    <div class="label sec-sub">About you</div>
+    <ul id="secAboutYou" class="sec-events"></ul>
+    <div id="secLogBox" hidden>
+      <div class="label sec-sub">Security log</div>
+      <ul id="secLog" class="sec-events"></ul>
     </div>
   </div>
 </div>
@@ -9096,6 +9133,10 @@
     $("signOut").hidden = !named;
     $("whoSep").hidden = !named;
     if (named) $("whoAmI").textContent = "Signed in as " + me.name + " · " + me.role;
+    // Security: for a signed-in person (or the lone admin of a no-password
+    // instance, who is everybody). The server answers 403 otherwise.
+    $("securityBtn").hidden = !(me?.name || me?.role === "admin");
+    refreshSecurityBadge();
   }
 
   $("signOut").addEventListener("click", async () => {
@@ -9325,6 +9366,77 @@
     if (st && !confirm("Turn two-factor sign-in OFF? A password alone will open the cockpit again.")) return;
     if (await tfaPost("/2fa/enabled", { enabled: !st }, true)) renderTfa();
   });
+
+  // ── Security panel ──────────────────────────────────────
+  async function securityInbox() {
+    try { const r = await fetch("/2fa/inbox"); return r.ok ? await r.json() : null; } catch { return null; }
+  }
+  async function refreshSecurityBadge() {
+    if ($("securityBtn").hidden) return;
+    const box = await securityInbox();
+    const n = box?.badge || 0;
+    $("securityBadge").hidden = !n;
+    $("securityBadge").textContent = n > 9 ? "9+" : String(n);
+  }
+  // Notices are not chat: a minute is soon enough.
+  setInterval(refreshSecurityBadge, 60000);
+
+  function secRow(e, withNotMe) {
+    const li = document.createElement("li");
+    if (e.unread) li.classList.add("unread");
+    if (e.kind === "not-me") li.classList.add("flag");
+    const text = document.createElement("span");
+    text.className = "ev-text";
+    text.textContent = e.text;
+    const at = document.createElement("span");
+    at.className = "ev-at";
+    at.textContent = new Date(e.at).toLocaleString();
+    li.append(text, at);
+    if (withNotMe) {
+      if (e.disowned) {
+        const done = document.createElement("span");
+        done.className = "ev-at";
+        done.textContent = "reported";
+        li.appendChild(done);
+      } else {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "not-me";
+        b.textContent = "This wasn't me";
+        b.addEventListener("click", async () => {
+          if (!confirm("Report this as not you?\n\nYour other sessions end now" +
+            (e.kind === "passkey-added" ? ", this passkey is removed" : "") +
+            ", and every admin is told.")) return;
+          const r = await fetch("/2fa/not-me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: e.id }) });
+          const out = await r.json().catch(() => ({}));
+          if (!r.ok) { alert(out.error || "refused"); return; }
+          renderSecurity();
+        });
+        li.appendChild(b);
+      }
+    }
+    return li;
+  }
+  function secList(ul, rows, withNotMe, empty) {
+    ul.replaceChildren(...(rows.length ? rows.map((e) => secRow(e, withNotMe)) : [Object.assign(document.createElement("li"), { className: "ev-empty", textContent: empty })]));
+  }
+  async function renderSecurity() {
+    const box = await securityInbox();
+    if (!box) { secList($("secAboutYou"), [], false, "couldn't load — sign in with your own account"); $("secLogBox").hidden = true; return; }
+    secList($("secAboutYou"), box.aboutYou, true, "nothing has been done to your account");
+    $("secLogBox").hidden = !box.log.length;
+    secList($("secLog"), box.log, false, "");
+    // Opening the panel is reading it: clear the badge (unread rows keep their
+    // highlight until the next opening, so you still see what was new).
+    await fetch("/2fa/inbox/seen", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+    refreshSecurityBadge();
+  }
+  $("securityBtn").addEventListener("click", async () => {
+    $("securityOverlay").hidden = false;
+    await renderSecurity();
+  });
+  $("securityClose").addEventListener("click", () => { $("securityOverlay").hidden = true; });
+  $("securityOverlay").addEventListener("click", (e) => { if (e.target === $("securityOverlay")) $("securityOverlay").hidden = true; });
 
   $("usersBtn").addEventListener("click", async () => {
     $("inviteBox").hidden = true;

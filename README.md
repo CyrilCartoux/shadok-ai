@@ -420,6 +420,12 @@ know before opening it up:
     a passkey or demoting an admin does the same.
   - While it is on, inviting, deleting an account and changing a role also ask
     the admin for their passkey.
+  - **Security panel** (🛡 in the header, a badge when something is new): what
+    was done to your account — invited, made admin, reset, a passkey added or
+    removed — and, for admins, the whole log. On anything you don't recognise,
+    **This wasn't me** ends your other sessions, removes a passkey you did not
+    add, and flags it to every admin. There is no mail yet: this panel is the
+    channel, so keep an eye on its badge.
   - While it is on, the instance password (`admin`) **cannot sign in to the
     browser** — it lives in every agent's environment and no one could reset it;
     use a named account. Agents, Telegram and peers keep working (they never use

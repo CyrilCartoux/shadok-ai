@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual, createHmac } from "node:crypto";
+import { recordEvent, loadEvents, saveEvents, inboxFor, markSeen, notMeEffect, describeEvent, type SecEvent } from "./security-events.js";
 import { execFile, spawn as spawnChild } from "node:child_process";
 import type { IncomingMessage } from "node:http";
 import fs from "node:fs";
@@ -1296,6 +1297,7 @@ app.post("/login/enroll", async (req, res) => {
     return { ...rest, passkeys: [...(a.passkeys ?? []), pk] };
   });
   console.log(`2fa: ${name} registered a passkey (${pk.label}) with an enrollment code from ${acct.enroll?.by}`);
+  recordEvent({ kind: "passkey-added", actor: name, target: name, detail: pk.label, passkeyId: pk.id });
   res.setHeader("Set-Cookie", [sessionCookie(name, true), CLEAR_PENDING]);
   res.json({ ok: true, user: name });
 });
@@ -1343,6 +1345,7 @@ app.post("/invite/:token", (req, res) => {
     ),
   );
   console.log(`users: ${acct!.name} redeemed their invitation`);
+  recordEvent({ kind: "invite-redeemed", actor: acct!.name, target: acct!.name });
   if (tfa) {
     res.setHeader("Set-Cookie", pendingCookie(acct!.name));
     return res.json({ ok: true, user: acct!.name, next: "enroll", code: enroll!.code });
@@ -1936,6 +1939,7 @@ app.post("/users", async (req, res) => {
   const invite = newInvite(Date.now());
   saveAccounts([...loadAccounts(), { name, role, createdAt: Date.now(), invite }]);
   console.log(`users: ${me!.name} invited ${name} as ${role}`);
+  recordEvent({ kind: "invited", actor: me!.name, target: name, detail: role });
   res.json({ ok: true, name, role, inviteUrl: `/invite/${invite.token}` });
 });
 
@@ -1956,6 +1960,7 @@ app.delete("/users", async (req, res) => {
   if (!(await stepUpIfTwoFactor(req, res, me!))) return;
   saveAccounts(loadAccounts().filter((a) => a.name !== name));
   console.log(`users: ${me!.name} removed ${name}`);
+  recordEvent({ kind: "removed", actor: me!.name, target: name });
   res.json({ ok: true });
 });
 
@@ -1983,6 +1988,8 @@ app.post("/users/role", async (req, res) => {
   if (!keep.ok) return res.status(400).json({ error: keep.error });
   if (!(await stepUpIfTwoFactor(req, res, me!))) return;
   saveAccounts(after);
+  console.log(`users: ${me!.name} made ${name} ${role}`);
+  recordEvent({ kind: "role-changed", actor: me!.name, target: name, detail: role });
   res.json({ ok: true });
 });
 
@@ -2054,6 +2061,7 @@ app.post("/2fa/register", async (req, res) => {
   if (!pk) return res.status(400).json({ error: "the passkey could not be registered" });
   updateAccount(me.name, (a) => ({ ...a, passkeys: [...(a.passkeys ?? []), pk] }));
   console.log(`2fa: ${me.name} registered a passkey (${pk.label})`);
+  recordEvent({ kind: "passkey-added", actor: me.name, target: me.name, detail: pk.label, passkeyId: pk.id });
   res.json({ ok: true, passkey: publicPasskey(pk) });
 });
 
@@ -2083,6 +2091,7 @@ app.post("/2fa/passkey/delete", async (req, res) => {
   saveAccounts(after);
   if (owner === me.name) res.setHeader("Set-Cookie", sessionCookie(me.name, !!cookieSession(req)?.mfa));
   console.log(`2fa: ${me.name} removed a passkey of ${owner}`);
+  recordEvent({ kind: "passkey-removed", actor: me.name, target: owner });
   res.json({ ok: true });
 });
 
@@ -2107,6 +2116,7 @@ app.post("/2fa/enroll-code", async (req, res) => {
   const enroll = newEnrollCode(Date.now(), me.name);
   updateAccount(target, (a) => ({ ...a, enroll }));
   console.log(`2fa: ${me.name} issued an enrollment code for ${target}`);
+  recordEvent({ kind: "device-code", actor: me.name, target });
   res.json({ ok: true, user: target, code: enroll.code, expiresAt: enroll.expiresAt });
 });
 
@@ -2115,6 +2125,48 @@ app.post("/2fa/enroll-code", async (req, res) => {
  * and every passkey go; they get a fresh invitation link, which also authorises
  * registering a new passkey. Needs a fresh passkey confirmation from the admin.
  */
+// ── Security panel (spec 2026-10-28 § 6): what was done to accounts, and
+// "this wasn't me". Like the rest of /2fa, for a PERSON only.
+app.get("/2fa/inbox", (req, res) => {
+  const me = tfaPerson(req, res, false);
+  if (!me) return;
+  const inbox = inboxFor(me, loadEvents());
+  const line = <T extends SecEvent>(e: T) => ({ ...e, text: describeEvent(e) });
+  res.json({ aboutYou: inbox.aboutYou.map(line), log: inbox.log.map(line), badge: inbox.badge });
+});
+app.post("/2fa/inbox/seen", (req, res) => {
+  const me = tfaPerson(req, res, true);
+  if (!me) return;
+  saveEvents(markSeen(loadEvents(), me));
+  res.json({ ok: true });
+});
+/**
+ * "This wasn't me", from the panel — so from the signed-in target themself. It
+ * ends every OTHER session of the account (this one is re-issued), removes a
+ * passkey nobody admits to adding, and flags it to every admin. It does not
+ * lock the account: the person clicking is, by construction, signed in as its
+ * owner.
+ */
+app.post("/2fa/not-me", (req, res) => {
+  const me = tfaPerson(req, res, true);
+  if (!me) return;
+  const events = loadEvents();
+  const ev = events.find((e) => e.id === String(req.body?.id ?? ""));
+  const v = notMeEffect(ev, me.name);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const now = Date.now();
+  updateAccount(me.name, (a) => ({
+    ...a,
+    sessionsAfter: now,
+    ...(v.removePasskey ? { passkeys: (a.passkeys ?? []).filter((p) => p.id !== v.removePasskey) } : {}),
+  }));
+  res.setHeader("Set-Cookie", sessionCookie(me.name, !!cookieSession(req)?.mfa));
+  saveEvents(events.map((e) => (e.id === ev!.id ? { ...e, disowned: true } : e)));
+  recordEvent({ kind: "not-me", actor: me.name, target: me.name, about: ev!.id, detail: describeEvent(ev!) });
+  console.log(`2fa: ${me.name} reported "this wasn't me" on ${ev!.kind}`);
+  res.json({ ok: true, removedPasskey: !!v.removePasskey });
+});
+
 app.post("/2fa/reset", async (req, res) => {
   const me = tfaPerson(req, res, true);
   if (!me) return;
@@ -2130,6 +2182,7 @@ app.post("/2fa/reset", async (req, res) => {
     ),
   );
   console.log(`2fa: ${me.name} reset the access of ${target}`);
+  recordEvent({ kind: "access-reset", actor: me.name, target });
   res.json({ ok: true, user: target, inviteUrl: `/invite/${invite.token}` });
 });
 
@@ -2147,6 +2200,7 @@ app.post("/2fa/enabled", async (req, res) => {
   if (!(await stepUpOk(req, res, me))) return;
   setTwoFactorForCwd(loadConfig(), process.cwd(), on);
   console.log(`2fa: ${me.name} turned two-factor sign-in ${on ? "ON" : "off"}`);
+  recordEvent({ kind: "two-factor", actor: me.name, target: "*", detail: on ? "on" : "off" });
   // Re-issue the actor's cookie with the second-factor flag: they just proved
   // it, and the switch would otherwise sign them out of their own tab.
   res.setHeader("Set-Cookie", sessionCookie(me.name, true));
