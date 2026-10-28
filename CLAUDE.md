@@ -112,7 +112,7 @@ both are silent in the DOM.
 | `src/update-channel.ts` | Which release stream an instance follows: `alpha` (every merge) or `beta` (promotions only, the default). Pure `resolveChannel` (anything malformed → `beta`, never a throw) and `pickTarget` (alpha takes the newer of `alpha`/`latest`, so a promotion cannot make the fast channel downgrade). The beta channel reads the `latest` dist-tag — see invariant 29. |
 | `Dockerfile` | The official image (README "Running in Docker"): Claude Code + shadok-ai + a **bundled headless browser** (Playwright Chromium at `/opt/playwright-browsers`, `--with-deps` so the OS libs are present), plus `git`/`gh`/`tmux`/toolchain. COPYs nothing (installs from npm); `.dockerignore` is `*`. Enters through **tini**, so pid 1 reaps orphans — see invariant 44. NB: NOT what a given deployment necessarily runs — the live VPS builds from a host-side Dockerfile of its own. |
 | `src/open-browser.ts` | Opens the cockpit on launch. Done by the SERVER, not the supervisor, because only it knows the port the walk landed on (`START_PORT` is where the walk BEGINS). The supervisor sets `SHADOK_OPEN=1` on the FIRST spawn only — it respawns the server on every auto-update, and a tab popping open several times a day is a nuisance. `shouldOpenBrowser` / `openCommand` are pure and tested; refuses in a container, over SSH, and on a display-less Linux. Fire-and-forget: a browser that will not open must never keep the server from serving. |
-| `src/preprompt.ts` | Pure `prepromptParts` — what shadok adds to an agent's context, as labelled sections with their source. Captured in `makePilot` AT SPAWN and kept in `prepromptById`, never recomputed: a profile or the permission mode can change under a live agent, and the panel must show what the RUNNING process got (the gap the UI already models as `profile` vs `appliedProfile`). It takes secret **names**, never values — values live in the child's env and never in its args, so the signature makes a leak impossible rather than merely unlikely. Sent with every `ready`, so it survives a reload. The **capabilities** section is read from DISK at spawn rather than assumed from the seeded list: a seed that failed must show as missing. Skills are listed by DESCRIPTION only, because that is what Claude Code loads into context — the body is read when it decides to use one — and because they are installed for the whole machine and rewritten at every boot, which the panel says on screen. |
+| `src/preprompt.ts` | Pure `prepromptParts` — what shadok adds to an agent's context, as labelled sections with their source. Captured in `makePilot` AT SPAWN and kept in `prepromptById`, never recomputed: a profile or the permission mode can change under a live agent, and the panel must show what the RUNNING process got (the gap the UI already models as `profile` vs `appliedProfile`). It takes secret **names**, never values — values live in the child's env and never in its args, so the signature makes a leak impossible rather than merely unlikely. Sent with every `ready`, so it survives a reload. The **capabilities** section is read from DISK at spawn rather than assumed from the seeded list: a seed that failed must show as missing. Skills are listed by DESCRIPTION only, because that is what Claude Code loads into context — the body is read when it decides to use one — and because they are installed for the whole machine and rewritten at every boot, which the panel says on screen. Also `prepromptFingerprint` + `stalenessReasons` (pure, tested): the **reload-to-apply** detection — a content comparison of what a running agent got vs what a fresh spawn would give it (preprompt/guardrails/skills/secrets, auth-cookie age, `claude` version), deliberately NOT a version number. The server anchors the spawn fingerprint DURABLY on the channel and gates it on pane adoption (invariant 40); the client reuses the Claude-Code-update badge. |
 | `src/csp.ts` | The Content-Security-Policy (`cspHeader`) and the nonce injection into the page (`injectNonce`, marker `__CSP_NONCE__`). Also `injectAssetVersion` (`__ASSET_V__`) and `injectInstanceKey` (`__INSTANCE_KEY__`) — the launch-dir key stamped into the page so the client namespaces its localStorage channel cache SYNCHRONOUSLY (invariant 34). Pure, tested. See invariant 12. |
 | `src/net.ts` | Where we listen and who may speak: `resolveHost` (`SHADOK_HOST`, loopback by default), `bindRefusal` (fail-closed: no network bind without a password), `originAllowed` (same-origin, see invariant 11). Pure, tested. |
 | `src/heartbeat.ts` | Keeps **idle** `/ws` connections alive behind a reverse proxy: an idle agent sends no traffic, so a proxy (nginx `proxy_read_timeout` 60s, Cloudflare ~100s) cuts the socket and the client loops on "reconnecting" — with nothing actually broken. `startHeartbeat(wss)` pings every client every 25s (`SHADOK_WS_PING_MS`) and `terminate()`s the one that misses its pong. `heartbeatSweep` is pure, tested. |
@@ -1260,6 +1260,30 @@ Auth section of `docs/architecture.md`).
     `<system-reminder>` is still dropped. Not caught by `tsc`/most tests because
     the fixtures were small; it takes a prompt big enough to be paste-wrapped,
     which the default-on ledger now produces constantly.
+
+40. **"Is this agent behind?" is a CONTENT question with a DURABLE, adoption-aware
+    anchor — not a version number, and not the in-memory snapshot.** Everything
+    shadok injects is fixed at spawn (pilot prompt, guardrails, permission mode,
+    secret names, skills list, the auth cookie), and a tmux agent keeps it across
+    server restarts — so a months-old agent silently runs a months-old context,
+    and its expired cookie 401s its own calls (invariant 33) with nothing in the
+    log. The reload indicator answers it by COMPARING what the running process got
+    against what a fresh spawn would give (`stalenessReasons`, `src/preprompt.ts`).
+    A version number is the wrong signal both ways: a release can change internals
+    and touch no injected context (false alarm), and a profile edit or a seeded
+    skill bumps no version (missed). Two traps made the obvious spelling wrong.
+    **The anchor cannot be `prepromptById`** — it is in memory, and `makePilot`
+    re-captures it from CURRENT state when a surviving pane is RE-ADOPTED after a
+    restart (`TmuxPilot.start()`, invariant 31), i.e. precisely when an auto-update
+    just changed the prompt under a live agent, so the in-memory anchor erases the
+    drift it should show. It lives on the CHANNEL instead (`spawnFp`/`spawnAt`/
+    `spawnClaudeVer`, on disk, server-owned, gone when the agent closes). **And it
+    must be written only for a process we actually SPAWNED** (`!pilot.attached`):
+    on adoption the stored anchor is left alone, or seeded `"legacy"` the first
+    time — which is what lights the indicator up on an operator's EXISTING old
+    agents, not just future ones. A restart re-records the anchor, which is what
+    makes the indicator go dark after a reload. Pure parts tested; verified end to
+    end in a browser against a live agent.
 
 36. **A start that fails must take its watchers with it — and a short id is not a
     session id.** One outage, three links, each survivable alone (2026-10-12).

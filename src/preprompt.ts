@@ -106,6 +106,85 @@ export function prepromptParts(input: PrepromptInput): PrepromptPart[] {
 }
 
 /**
+ * Pure: a stable fingerprint of a preprompt, so two of them can be compared
+ * cheaply and stored as one short string. Order-sensitive on purpose — a
+ * reordering IS a change the agent would see. Not cryptographic; it only needs
+ * to differ whenever any section's label/source/text differs.
+ */
+export function prepromptFingerprint(parts: PrepromptPart[]): string {
+  let h = 5381;
+  const s = parts.map((p) => `${p.label}\u0000${p.source}\u0000${p.text}`).join("\u0001");
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(16);
+}
+
+/** One reason a running agent is behind what a fresh spawn would give it. */
+export interface StaleReason {
+  kind: "preprompt" | "auth" | "claude";
+  label: string;
+}
+
+/** Marker stored for an agent adopted with no recorded fingerprint — it
+ *  predates the fingerprinting, so it is treated as stale until reloaded. */
+export const LEGACY_FINGERPRINT = "legacy";
+
+export interface StalenessInput {
+  /** The fingerprint recorded at the agent's last REAL spawn, or null when none
+   *  was ever recorded (a brand-new agent before its first record). */
+  spawnFp: string | null;
+  /** The fingerprint a spawn right now would produce. */
+  currentFp: string;
+  /** Is a GUI password set? Only then is an auth cookie injected (invariant 33),
+   *  so only then can it go stale. */
+  hasPassword: boolean;
+  /** When the agent was last really spawned (ms), or null when unknown. */
+  spawnedAt: number | null;
+  now: number;
+  /** The injected cookie's lifetime; past it, calls to the own server 401. */
+  authTtlMs: number;
+  spawnClaudeVersion: string | null;
+  currentClaudeVersion: string | null;
+}
+
+/**
+ * Pure: why a running agent should be reloaded — empty when it is up to date.
+ *
+ * Version-INDEPENDENT by design (the fingerprint is content, not a number): a
+ * shadok release that doesn't touch the prompt/guardrails/skills raises nothing,
+ * and a profile edit that bumps no version still does. This is the detection the
+ * cockpit's reload indicator reads.
+ */
+export function stalenessReasons(i: StalenessInput): StaleReason[] {
+  const out: StaleReason[] = [];
+  if (i.spawnFp !== null && i.spawnFp !== i.currentFp) {
+    out.push({
+      kind: "preprompt",
+      label:
+        i.spawnFp === LEGACY_FINGERPRINT
+          ? "started before this cockpit version — reload to refresh its prompt, guardrails and skills"
+          : "prompt, guardrails, skills or secrets changed since this agent started",
+    });
+  }
+  if (i.hasPassword && i.spawnedAt !== null && i.now - i.spawnedAt > i.authTtlMs) {
+    out.push({
+      kind: "auth",
+      label: "auth token past its one-week validity — reload to refresh it (invariant 33)",
+    });
+  }
+  if (
+    i.spawnClaudeVersion &&
+    i.currentClaudeVersion &&
+    i.spawnClaudeVersion !== i.currentClaudeVersion
+  ) {
+    out.push({
+      kind: "claude",
+      label: `Claude Code updated (${i.spawnClaudeVersion} → ${i.currentClaudeVersion}) — reload onto the new binary`,
+    });
+  }
+  return out;
+}
+
+/**
  * Pure: a skill's name and one-line description, from its SKILL.md frontmatter.
  *
  * Tolerant on purpose — a skill whose header we cannot read is still installed,

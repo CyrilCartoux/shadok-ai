@@ -249,6 +249,18 @@ Enter to skip; you can add it later from the web UI).
   not a recomputation that would quietly show today's profile. Also on the ⋯
   menu of each channel. It says plainly that it is shadok's half: Claude Code
   adds its own context, which shadok never sees.
+- **Reload-to-apply indicator** — an agent's context is fixed **at spawn**, so a
+  long-lived one can drift behind the cockpit: the pilot prompt or its guardrails
+  changed, a new skill was seeded, its injected auth token aged past a week
+  (so its own calls start failing silently), or Claude Code itself updated. The
+  cockpit detects this by **comparing what the running process actually got
+  against what a fresh spawn would give it** — a content comparison, not a
+  version number, so a release that changed nothing relevant raises nothing, and
+  a profile edit that bumped no version still does. A `↻` lights up on the agent
+  (hover for the reasons) and the **version menu** shows *Reload N agents to
+  apply changes*; a reload respawns each one in place, keeping its history.
+  Agents started before a given update stay on the old context until reloaded —
+  this is how you spot the ones still running it.
 - **Phone layout** — the cockpit is a fixed chassis that never pans sideways,
   sized on the *visual* viewport so the composer stays clear of the browser's
   own bar and, when the keyboard opens, sits right above it (the instrument bar

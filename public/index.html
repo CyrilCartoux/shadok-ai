@@ -3239,6 +3239,7 @@
       shells: 0,         // background shells the pane reports (the ⏳ on the tab)
       monitors: 0,       // monitors it armed (the 👁 on the tab)
       updateState: null, // Claude Code update: "restart" (reload to apply) | "failed" (install then reload) | null
+      staleReasons: [],  // server-side "reload to apply" reasons: prompt/guardrails/skills/secrets changed, auth token expired, claude binary updated
       btnEl: btn, ledEl: led, nameEl: name, timerEl: timer,
       ctxNumEl: ctxNum, ctxFillEl: ctxFill, muteEl: mute, cronEl: cron, tgEl: tg, shellsEl: shells, monitorsEl: monitors, updateEl: update,
       mirror: false,     // mirrored into Telegram? (the ✈️ on the tab)
@@ -3452,53 +3453,78 @@
     if (tab === active) paintChanUpdate();
     refreshReloadUpdatesBtn();
   }
-  /** Every agent flagged as needing a Claude Code reload AND reachable now. */
-  function pendingUpdateTabs() {
-    return tabs.filter((t) => t.updateState && t.sessionId && t.ws && t.ws.readyState === WebSocket.OPEN);
+  /** One view over BOTH reload sources for a tab: the Claude Code binary update
+   *  (scraped from the agent's screen → `updateState`) AND the server-reported
+   *  staleness (prompt/guardrails/skills/secrets changed, auth token expired,
+   *  binary moved on). `needs` is true if either asks for a reload; `install`
+   *  means a failed auto-update still needs `npm i -g` first; `reasons` is the
+   *  merged human list for the tooltip. The claude-binary staleReason is dropped
+   *  when `updateState` already says the same thing, so it never reads twice. */
+  function tabReloadInfo(tab) {
+    const act = updateAction(tab.updateState);
+    const stale = (tab.staleReasons || []).filter((r) => !(act && r.kind === "claude"));
+    const reasons = [];
+    if (act === "reload") reasons.push("Claude Code updated — reload to apply");
+    if (act === "install") reasons.push("Claude Code auto-update failed — install then reload");
+    for (const r of stale) reasons.push(r.label);
+    return { needs: !!act || stale.length > 0, install: act === "install", reasons };
   }
-  /** The version-menu "Reload agents to apply update" button: shown only when
+  /** The server reported this agent's staleness → store and repaint. */
+  function setStaleReasons(tab, reasons) {
+    const list = Array.isArray(reasons) ? reasons : [];
+    const sig = JSON.stringify(list);
+    if ((tab.staleSig || "[]") === sig) return;
+    tab.staleSig = sig;
+    tab.staleReasons = list;
+    paintUpdateBadge(tab);
+    if (tab === active) paintChanUpdate();
+    refreshReloadUpdatesBtn();
+  }
+  /** Every agent flagged as needing a reload (binary update OR staleness) AND
+   *  reachable now. */
+  function pendingUpdateTabs() {
+    return tabs.filter((t) => tabReloadInfo(t).needs && t.sessionId && t.ws && t.ws.readyState === WebSocket.OPEN);
+  }
+  /** The version-menu "Reload agents to apply changes" button: shown only when
    *  there ARE pending agents, labelled with the count. */
   function refreshReloadUpdatesBtn() {
     const btn = document.getElementById("reloadUpdatesBtn");
     if (!btn) return;
     const n = pendingUpdateTabs().length;
     btn.hidden = n === 0 || claudeInstalling;
-    if (n > 0) btn.textContent = "↻ Reload " + n + " agent" + (n > 1 ? "s" : "") + " to apply update";
+    if (n > 0) btn.textContent = "↻ Reload " + n + " agent" + (n > 1 ? "s" : "") + " to apply changes";
   }
   function paintUpdateBadge(tab) {
     const el = tab.updateEl;
-    const act = updateAction(tab.updateState);
-    el.hidden = !act;
-    if (!act) return;
+    const info = tabReloadInfo(tab);
+    el.hidden = !info.needs;
+    if (!info.needs) return;
     // "install" (a failed auto-update we haven't fixed yet) reads as a warning;
     // anything that just needs a reload reads as the green update glyph.
-    const install = act === "install";
-    el.textContent = install ? "⚠" : "↻";
-    el.classList.toggle("failed", install);
-    el.title = install
-      ? "Claude Code auto-update failed — click to install it and reload this agent"
-      : "Claude Code updated — click to reload this agent and apply it";
+    el.textContent = info.install ? "⚠" : "↻";
+    el.classList.toggle("failed", info.install);
+    el.title = (info.reasons.join(" · ") || "Reload this agent to apply changes") + " — click to reload";
   }
   function paintChanUpdate() {
     const btn = $("chanUpdate");
-    const act = active ? updateAction(active.updateState) : null;
+    const info = active ? tabReloadInfo(active) : { needs: false };
     if (claudeInstalling) {
       btn.hidden = false; btn.disabled = true; btn.textContent = "installing…";
       btn.classList.remove("failed");
       return;
     }
     btn.disabled = false;
-    btn.hidden = !act;
-    if (!act) return;
-    const install = act === "install";
-    btn.textContent = install ? "⤓ install update" : "↻ reload to apply";
-    btn.classList.toggle("failed", install);
+    btn.hidden = !info.needs;
+    if (!info.needs) return;
+    btn.textContent = info.install ? "⤓ install update" : "↻ reload to apply";
+    btn.title = info.reasons.join(" · ") || "Reload this agent to apply changes";
+    btn.classList.toggle("failed", info.install);
   }
   /** The badge/button click: reload the agent, or install then reload. */
   function handleClaudeUpdate(tab) {
-    const act = updateAction(tab.updateState);
-    if (act === "reload") return reloadTab(tab);
-    if (act === "install") return installClaudeUpdate(tab);
+    const info = tabReloadInfo(tab);
+    if (info.install) return installClaudeUpdate(tab);
+    if (info.needs) return reloadTab(tab);
   }
   /** Run the global Claude Code install (`npm i -g …`) ONCE. Returns {ok, err}.
    *  Shared by the single-agent path and the bulk "reload all" path — one install
@@ -7133,6 +7159,7 @@
         // the honest UX so the user isn't silently driving the wrong instance.)
         if (window.serverSwapped(instanceKey, msg.instanceKey)) { handleSwap(); break; }
         if (Array.isArray(msg.preprompt)) renderPreprompt(t, msg.preprompt);
+        if (Array.isArray(msg.stale)) setStaleReasons(t, msg.stale);
         t.cwd = msg.cwd;
         t.sessionId = msg.sessionId;
         t.branch = msg.branch || null;
@@ -7381,6 +7408,13 @@
         // Claude Code's update footer (installed→restart, or auto-update failed)
         // means its binary changed under this still-running agent; surface it.
         setUpdateState(t, claudeUpdateState(msg.text));
+        break;
+      case "stale":
+        // The server re-evaluated what this agent is running vs what a fresh
+        // spawn would give it (prompt/guardrails/skills/secrets, auth age,
+        // claude binary) — drives the same per-agent reload badge + the
+        // version-menu "reload N agents" count.
+        setStaleReasons(t, msg.reasons);
         break;
       case "term-data":
         // Experimental raw terminal: bytes from the pane (base64) → xterm.
