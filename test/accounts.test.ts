@@ -147,7 +147,7 @@ test("invite: an already redeemed link says so", () => {
   assert.match((v as { error: string }).error, /already/i);
 });
 
-test("newInvite: a random token and a one-week life", () => {
+test("newInvite: a random token and a 48-hour life", () => {
   const a = newInvite(0), b = newInvite(0);
   assert.notEqual(a.token, b.token);
   assert.ok(a.token.length >= 32);
@@ -217,4 +217,22 @@ test("a session key is refused when forged, truncated or from another instance",
   assert.equal(readSessionKey("", SECRET), null);
   assert.equal(readSessionKey("no-dot", SECRET), null);
   assert.equal(readSessionKey(".", SECRET), null);
+});
+
+import { sessionAlive, readSessionFull } from "../src/accounts.js";
+
+test("invite: 48 hours, not a week", () => {
+  assert.equal(INVITE_TTL_MS, 48 * 3600 * 1000);
+});
+
+test("session: the cookie says when it was issued", () => {
+  const t = signSession("ada", 1_000, SECRET, true);
+  assert.deepEqual(readSessionFull(t, SECRET, 2_000, WEEK), { user: "ada", mfa: true, issuedAt: 1_000 });
+});
+
+test("sessionAlive: a session opened before a reset is dead, one after it is fine", () => {
+  assert.equal(sessionAlive(1_000, {}), true);
+  assert.equal(sessionAlive(1_000, { sessionsAfter: 2_000 }), false);
+  assert.equal(sessionAlive(2_000, { sessionsAfter: 2_000 }), true); // re-issued in the same millisecond
+  assert.equal(sessionAlive(3_000, { sessionsAfter: 2_000 }), true);
 });

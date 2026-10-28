@@ -1878,6 +1878,27 @@
      cockpit uses 6 — i.e. a grey and a white that existed nowhere else. The amber
      rule on top follows the instruments' grammar (active tab edge, lit ⌨️): this
      panel is in the foreground. */
+  #securityBtn { position: relative; }
+  .sec-badge {
+    position: absolute; top: -5px; right: -5px;
+    min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+    background: var(--err); color: #fff; font-size: 10px; line-height: 15px; font-weight: 600;
+  }
+  .sec-sub { margin: 14px 0 6px; }
+  .sec-events { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .sec-events li {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px;
+  }
+  .sec-events li.unread { border-color: var(--amber); }
+  .sec-events li.flag { border-color: var(--err); }
+  .sec-events .ev-text { flex: 1; min-width: 0; }
+  .sec-events li { flex-wrap: wrap; }
+  .sec-events code { flex-basis: 100%; font-size: 12px; user-select: all; word-break: break-all; color: var(--amber); }
+  .u-recover { flex-basis: 100%; display: flex; gap: 6px; margin-top: 6px; }
+  .sec-events .ev-at { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+  .sec-events .ev-empty { color: var(--text-dim); border-style: dashed; }
+  .sec-events button.not-me { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); font-size: 12px; }
   #secretsPanel, .sec-panel {
     background: var(--bg-raised); color: var(--text);
     width: min(560px, 100%); max-height: min(80vh, 760px); overflow: auto;
@@ -2017,7 +2038,7 @@
      rôle et les boutons empilés les uns sous les autres. Même traitement que
      #profilesList, dont il est le frère. */
   #usersList { list-style: none; padding: 0; margin: 0 0 10px; }
-  #usersList li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; }
+  #usersList li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; }
   #usersList li:nth-child(odd) { background: rgba(255,255,255,.04); }
   #usersList .pmeta { font-size: 12px; opacity: .7; }
   #usersList button { background: none; border: 1px solid rgba(255,255,255,.15); border-radius: 5px; color: inherit; cursor: pointer; font-size: 12px; padding: 2px 8px; }
@@ -2115,6 +2136,9 @@
   <button id="secretsBtn" class="icon" title="Repo secrets (injected as env)" aria-label="Secrets"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><circle cx="8.5" cy="8.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 11l7.5 7.5M15.5 15.5l1.8-1.8M17.8 17.8l1.7-1.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   <button id="ledgerBtn" class="icon" title="Shared ledger — what agents have resolved / decided" aria-label="Ledger"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><rect x="5" y="3.5" width="14" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
   <button id="profilesBtn" class="icon" title="Agent profiles (role + guardrails + secrets)" aria-label="Profiles"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 19.5a6.5 6.5 0 0 1 13 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+  <!-- Security: what was done to accounts and second factors, and "this wasn't
+       me". Kept out of the ⋯ overflow on a phone: its badge is the point. -->
+  <button id="securityBtn" class="icon" title="Security — what happened to your account" aria-label="Security" hidden><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span id="securityBadge" class="sec-badge" hidden></span></button>
   <button id="usersBtn" class="icon" title="Users — accounts for this instance" aria-label="Users" hidden><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 19a6 6 0 0 1 12 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M16 6.2a3.2 3.2 0 0 1 0 6.1M17.5 19a6 6 0 0 0-2.2-4.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
   <button id="telegramBtn" class="icon" title="Configure the Telegram bot (token, on/off, allowed chats)"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><path fill="#26A5E4" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></button>
   <button id="muteNotif" class="icon" title="Mute the notification sound" aria-label="Notification sound"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><path d="M6 16.5h12c-1.3-1.1-2-2.7-2-4.5v-1.2a4 4 0 0 0-8 0v1.2c0 1.8-.7 3.4-2 4.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10.4 19a1.7 1.7 0 0 0 3.2 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line class="mute-slash" x1="4.5" y1="4.5" x2="19.5" y2="19.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
@@ -2412,6 +2436,30 @@
       <button id="profConfirmCancel">Cancel</button>
       <button id="profConfirmSave">Save only</button>
       <button class="primary" id="profConfirmRestart">Restart now</button>
+    </div>
+  </div>
+</div>
+
+<div id="securityOverlay" class="overlay" hidden>
+  <div class="sec-panel">
+    <div class="sec-head">
+      <strong>Security</strong>
+      <button id="securityClose" title="Close">✕</button>
+    </div>
+    <p class="sec-note">What was done to your account. If you don't recognise something, press <b>This wasn't me</b>: your other sessions end, a passkey you did not add is removed, and the admins are told.</p>
+    <div id="secWaitingBox" hidden>
+      <div class="label sec-sub">Waiting for you</div>
+      <ul id="secWaiting" class="sec-events"></ul>
+    </div>
+    <div id="secMineBox" hidden>
+      <div class="label sec-sub">Your requests</div>
+      <ul id="secMine" class="sec-events"></ul>
+    </div>
+    <div class="label sec-sub">About you</div>
+    <ul id="secAboutYou" class="sec-events"></ul>
+    <div id="secLogBox" hidden>
+      <div class="label sec-sub">Security log</div>
+      <ul id="secLog" class="sec-events"></ul>
     </div>
   </div>
 </div>
@@ -9140,6 +9188,7 @@
   // The button only exists for an admin. Hiding it is a courtesy: the server
   // refuses a member's write regardless, which is where the rule actually lives.
   let me = null;
+  let tfaEnabled = false; // read from GET /2fa when the Users panel renders
   async function loadMe() {
     try { me = await (await fetch("/me")).json(); } catch { me = null; }
     const b = $("usersBtn");
@@ -9154,6 +9203,10 @@
     $("signOut").hidden = !named;
     $("whoSep").hidden = !named;
     if (named) $("whoAmI").textContent = "Signed in as " + me.name + " · " + me.role;
+    // Security: for a signed-in person (or the lone admin of a no-password
+    // instance, who is everybody). The server answers 403 otherwise.
+    $("securityBtn").hidden = !(me?.name || me?.role === "admin");
+    refreshSecurityBadge();
   }
 
   $("signOut").addEventListener("click", async () => {
@@ -9196,31 +9249,48 @@
       const flip = document.createElement("button");
       flip.textContent = u.role === "admin" ? "make member" : "make admin";
       flip.addEventListener("click", async () => {
-        await fetch("/users/role", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: u.name, role: u.role === "admin" ? "member" : "admin" }),
-        });
+        const r = await adminWrite("/users/role", "POST", { name: u.name, role: u.role === "admin" ? "member" : "admin" });
+        if (r?.pending) alert("Asked. A second admin must approve it from their Security panel (🛡).");
         renderUsers();
       });
       const del = document.createElement("button");
       del.textContent = "delete"; del.style.color = "#e26";
       del.addEventListener("click", async () => {
         if (!confirm("Remove " + u.name + "?\n\nTheir open sessions stop working immediately.")) return;
-        await fetch("/users?name=" + encodeURIComponent(u.name), { method: "DELETE" });
+        await adminWrite("/users?name=" + encodeURIComponent(u.name), "DELETE", {});
         renderUsers();
       });
       btns.className = "u-actions";
       // Lost password or lost device: another admin resets, or hands a code
       // for a new device. Both need THIS admin's passkey, right now.
+      // Recover access: three levels, by what was lost (spec 2026-10-28 § 4).
+      // The choice opens below the row; each level asks for THIS admin's passkey.
       const reset = document.createElement("button");
-      reset.textContent = "reset access";
-      reset.title = "Lost password or device: wipe their password and passkeys, and give them a new invitation link";
-      reset.addEventListener("click", async () => {
-        if (!confirm("Reset " + u.name + "'s access?\n\nTheir password and every passkey are removed. You will get a new invitation link to hand them.")) return;
-        const r = await tfaPost("/2fa/reset", { user: u.name }, true);
-        if (r) showInvite(u.name, location.origin + r.inviteUrl);
-        renderUsers();
-      });
+      reset.textContent = "recover access…";
+      reset.title = "Lost password, lost passkey, or lost everything";
+      const levels = document.createElement("div");
+      levels.className = "u-recover";
+      levels.hidden = true;
+      const LEVELS = [
+        [1, "lost password", "Their passkeys are kept: you get a link (48 h) on which they choose a new password, then confirm with one of their passkeys."],
+        [2, "lost passkey", "A second admin must approve; then you get a code (48 h) that lets them register a new device. Their other passkeys are kept."],
+        [3, "lost everything", "Password and passkeys are wiped — in 24 h, or as soon as a second admin approves. Anyone involved can cancel it meanwhile."],
+      ];
+      for (const [level, label, what] of LEVELS) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label;
+        b.title = what;
+        b.addEventListener("click", async () => {
+          if (!confirm(u.name + " — " + label + "\n\n" + what)) return;
+          const r = await tfaPost("/2fa/recover", { user: u.name, level }, true);
+          if (!r) { alert($("tfaErr").textContent || "refused"); return; }
+          showHandover(u.name, r);
+          renderUsers();
+        });
+        levels.appendChild(b);
+      }
+      reset.addEventListener("click", () => { levels.hidden = !levels.hidden; });
       const code = document.createElement("button");
       code.textContent = "device code";
       code.title = "A 10-minute code that lets them register a passkey on a device";
@@ -9232,14 +9302,24 @@
       if (!u.pending) btns.append(code);
       if (!u.pending && u.name !== me?.name) btns.append(reset);
       btns.append(flip, del);
-      li.append(meta, btns);
+      li.append(meta, btns, levels);
       ul.appendChild(li);
     }
   }
   /** The link is the only way in and it is shown once, so it gets a block of
    *  its own: readable, selectable, and copyable without aiming at wrapped text. */
+  /** What a recovery hands over: a link, a code — or nothing yet, when a
+   *  second admin still has to approve. */
+  function showHandover(name, r) {
+    if (r.pending) return alert("Asked. A second admin must approve it from their Security panel (🛡)" +
+      (r.level === 3 ? " — or it takes effect on its own in 24 h." : "."));
+    const h = r.handover;
+    if (!h) return;
+    if (h.kind === "link") showInvite(name, location.origin + h.value);
+    else showTfaCode({ code: h.value, expiresAt: h.expiresAt }, "for " + name);
+  }
   function showInvite(name, url) {
-    $("inviteWho").textContent = "Invitation for " + name + " — valid 7 days";
+    $("inviteWho").textContent = "Invitation for " + name + " — valid 48 hours";
     $("inviteUrl").textContent = url;
     $("inviteCopy").textContent = "Copy";
     $("inviteBox").hidden = false;
@@ -9288,6 +9368,23 @@
       return { challengeId: o.j.challengeId, assertion };
     } catch (err) { tfaError("Passkey cancelled: " + (err?.message || err)); return null; }
   }
+  /**
+   * An account write by an admin — invite, delete, change a role. With
+   * two-factor on, the server wants a FRESH passkey confirmation for each, so
+   * it is asked for here first. Returns the JSON answer, or null after saying
+   * why (alert: these buttons sit outside the two-factor box's error line).
+   */
+  async function adminWrite(url, method, body) {
+    let extra = {};
+    if (tfaEnabled) {
+      extra = await confirmPasskey();
+      if (!extra) { alert($("tfaErr").textContent || "Passkey confirmation needed."); return null; }
+    }
+    const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, ...extra }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(out.error || "refused"); return null; }
+    return out;
+  }
   /** POST, with a passkey confirmation first when `stepUp`. Shows the refusal. */
   async function tfaPost(url, body, stepUp) {
     tfaError("");
@@ -9315,6 +9412,7 @@
     $("tfaBox").hidden = !st;
     if (!st) return;
     $("tfaState").textContent = st.enabled ? "on" : "off";
+    tfaEnabled = !!st.enabled;
     const admin = me?.role === "admin";
     const t = $("tfaToggle");
     t.hidden = !admin || !st.named;
@@ -9369,6 +9467,116 @@
     if (await tfaPost("/2fa/enabled", { enabled: !st }, true)) renderTfa();
   });
 
+  // ── Security panel ──────────────────────────────────────
+  async function securityInbox() {
+    try { const r = await fetch("/2fa/inbox"); return r.ok ? await r.json() : null; } catch { return null; }
+  }
+  async function refreshSecurityBadge() {
+    if ($("securityBtn").hidden) return;
+    const box = await securityInbox();
+    const n = box?.badge || 0;
+    $("securityBadge").hidden = !n;
+    $("securityBadge").textContent = n > 9 ? "9+" : String(n);
+  }
+  // Notices are not chat: a minute is soon enough.
+  setInterval(refreshSecurityBadge, 60000);
+
+  function secRow(e, withNotMe) {
+    const li = document.createElement("li");
+    if (e.unread) li.classList.add("unread");
+    if (e.kind === "not-me") li.classList.add("flag");
+    const text = document.createElement("span");
+    text.className = "ev-text";
+    text.textContent = e.text;
+    const at = document.createElement("span");
+    at.className = "ev-at";
+    at.textContent = new Date(e.at).toLocaleString();
+    li.append(text, at);
+    if (withNotMe) {
+      if (e.disowned) {
+        const done = document.createElement("span");
+        done.className = "ev-at";
+        done.textContent = "reported";
+        li.appendChild(done);
+      } else {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "not-me";
+        b.textContent = "This wasn't me";
+        b.addEventListener("click", async () => {
+          if (!confirm("Report this as not you?\n\nYour other sessions end now" +
+            (e.kind === "passkey-added" ? ", this passkey is removed" : "") +
+            ", and every admin is told.")) return;
+          const r = await fetch("/2fa/not-me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: e.id }) });
+          const out = await r.json().catch(() => ({}));
+          if (!r.ok) { alert(out.error || "refused"); return; }
+          renderSecurity();
+        });
+        li.appendChild(b);
+      }
+    }
+    return li;
+  }
+  /** A two-admin request: approve/refuse it (waiting for me), or follow and
+   *  cancel it (mine) — with what to hand over once it is done. */
+  function reqRow(r, approvable) {
+    const li = document.createElement("li");
+    const text = document.createElement("span");
+    text.className = "ev-text";
+    let state = "";
+    if (r.doneAt) state = { applied: "done", cancelled: "cancelled", refused: "refused", expired: "expired" }[r.outcome] || r.outcome;
+    else if (r.kind === "full-reset") state = "takes effect " + new Date(r.effectiveAt).toLocaleString() + " unless approved or cancelled";
+    else state = "waiting for a second admin";
+    text.textContent = r.text + " — " + state;
+    li.appendChild(text);
+    const act = (label, url, stepUp, cls) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      if (cls) b.className = cls;
+      b.addEventListener("click", async () => {
+        const out = await tfaPost(url, { id: r.id }, stepUp);
+        if (!out) { alert($("tfaErr").textContent || "refused"); return; }
+        if (out.handover) showHandover(r.target, { handover: out.handover });
+        renderSecurity();
+      });
+      li.appendChild(b);
+    };
+    if (approvable) { act("Approve", "/2fa/requests/approve", true); act("Refuse", "/2fa/requests/cancel", false, "not-me"); }
+    else if (!r.doneAt) act("Cancel", "/2fa/requests/cancel", false, "not-me");
+    if (r.handover) {
+      const h = document.createElement("code");
+      h.textContent = r.handover.kind === "link" ? location.origin + r.handover.value : r.handover.value;
+      h.title = "Hand this to " + r.target + " — valid until " + new Date(r.handover.expiresAt).toLocaleString();
+      li.appendChild(h);
+    }
+    return li;
+  }
+  function secList(ul, rows, withNotMe, empty) {
+    ul.replaceChildren(...(rows.length ? rows.map((e) => secRow(e, withNotMe)) : [Object.assign(document.createElement("li"), { className: "ev-empty", textContent: empty })]));
+  }
+  async function renderSecurity() {
+    const box = await securityInbox();
+    if (!box) { secList($("secAboutYou"), [], false, "couldn't load — sign in with your own account"); $("secLogBox").hidden = true; return; }
+    secList($("secAboutYou"), box.aboutYou, true, "nothing has been done to your account");
+    $("secWaitingBox").hidden = !box.waiting?.length;
+    $("secWaiting").replaceChildren(...(box.waiting || []).map((r) => reqRow(r, true)));
+    $("secMineBox").hidden = !box.mine?.length;
+    $("secMine").replaceChildren(...(box.mine || []).map((r) => reqRow(r, false)));
+    $("secLogBox").hidden = !box.log.length;
+    secList($("secLog"), box.log, false, "");
+    // Opening the panel is reading it: clear the badge (unread rows keep their
+    // highlight until the next opening, so you still see what was new).
+    await fetch("/2fa/inbox/seen", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+    refreshSecurityBadge();
+  }
+  $("securityBtn").addEventListener("click", async () => {
+    $("securityOverlay").hidden = false;
+    await renderSecurity();
+  });
+  $("securityClose").addEventListener("click", () => { $("securityOverlay").hidden = true; });
+  $("securityOverlay").addEventListener("click", (e) => { if (e.target === $("securityOverlay")) $("securityOverlay").hidden = true; });
+
   $("usersBtn").addEventListener("click", async () => {
     $("inviteBox").hidden = true;
     $("peerInviteBox").hidden = true;
@@ -9387,12 +9595,8 @@
     e.preventDefault();
     const name = $("userName").value.trim();
     if (!name) return;
-    const r = await fetch("/users", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, role: $("userRole").value }),
-    });
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok) { alert(out.error || "failed"); return; }
+    const out = await adminWrite("/users", "POST", { name, role: $("userRole").value });
+    if (!out) return;
     // The link is the ONLY way in, and it is shown once. It stays on screen
     // until the panel is reopened rather than flashing past in a toast.
     showInvite(name, location.origin + out.inviteUrl);

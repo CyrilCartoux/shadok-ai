@@ -833,7 +833,43 @@ Design and threat model: `docs/superpowers/specs/2026-10-21-passkey-2fa-design.m
   and a redeemed invitation, which vouches the same way).
 - **Actions that could undo the second factor for someone** — reset, a code for
   another person, switching 2FA on/off, removing another's passkey — require a
-  FRESH passkey assertion from the actor (`stepUpOk`), not just a session.
+  FRESH passkey assertion from the actor (`stepUpOk`), not just a session. So
+  do the plain account writes while 2FA is on — inviting, deleting an account,
+  changing a role (`stepUpIfTwoFactor`): a ridden admin session could otherwise
+  invite an accomplice as admin.
+- **A reset ends the sessions opened before it.** The cookie carries its issue
+  time; `Account.sessionsAfter` refuses any older one (`sessionAlive`, read in
+  `cookieAccount`). Set by a reset, a removed passkey (usually a lost device,
+  which may still be signed in — the person removing their own gets a fresh
+  cookie) and a demotion. Redeeming the reset link keeps it, or the new
+  password would bring a stolen pre-reset session back. Invitations last 48 h.
+  Design of the rest of v2: `docs/superpowers/specs/2026-10-28-2fa-v2-recovery-design.md`.
+- **The Security panel is the notification channel** (no mail sender exists).
+  Every account and second-factor write records an event
+  (`src/security-events.ts`, `~/.shadok-ai/users/<key>.events.json`, bounded to
+  500 rows / 90 days; recording never fails the action). `GET /2fa/inbox` gives
+  a person what concerns them (`aboutYou`: what others did to them, plus every
+  passkey change even "by themselves" — whoever holds their password and a code
+  IS them to the server) and gives admins the whole log; the badge counts
+  unread notices and unread flags. `POST /2fa/not-me` is "this wasn't me":
+  every other session ends (`sessionsAfter`, the caller's cookie re-issued), a
+  disowned passkey is removed, and a `not-me` event flags it to the admins. It
+  does not lock the account — the caller is, by construction, signed in as its
+  owner; the lock is for the mail link of § 7, later.
+- **Two admins for what one must not do alone** (`src/admin-requests.ts`,
+  `<key>.requests.json`): with 2FA on, a lost-passkey recovery, a full reset
+  and a promotion/demotion become requests a SECOND admin approves (never the
+  asker, never the target) from the Security panel. A full reset also takes
+  effect on its own 24 h after the ask. There is no timer: due requests are
+  applied by whoever next reads them (`settleRequests`, from `GET /users` and
+  `GET /2fa/inbox`), so a restart loses nothing. The asker, any admin or the
+  target can cancel — the target via "this wasn't me" on the notice. The
+  one-admin paths that did the same thing (v1's `/2fa/reset`, a device code for
+  someone who already has a passkey) are refused while 2FA is on. Level 1 (lost
+  password) stays one admin because it keeps the passkeys: its link
+  (`invite.reason: "password"`) sets a password and then asks for one of them,
+  through the login page's ordinary passkey step. A handover (link, code) is
+  shown only to the two admins involved.
 - **Only a person manages accounts while it is on**: `accountAdmin` and the
   `/2fa/*` routes read `cookieAccount`, which never accepts an agent's session
   key or a peer. The key IS the bootstrap admin; without this an agent could
