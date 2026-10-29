@@ -4234,8 +4234,20 @@
     d.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // One confirmation for ending an agent, shared by the header's End button and
+  // the left-column close (the tab's × and the agent menu's "Close agent"), so
+  // the wording never drifts between them. Ending stops the process and drops the
+  // agent from the list; work it committed or left in its worktree is kept — an
+  // empty worktree is cleaned up (invariant 5). The main channel never reaches
+  // here (it cannot be closed).
+  function confirmEndAgent(tab) {
+    const name = (tab && tab.nameEl ? tab.nameEl.textContent : "") || "this agent";
+    return confirm("End “" + name + "”?\n\nIts session stops and it leaves the list. Any work it committed or left in its worktree is kept; an empty worktree is cleaned up.");
+  }
+
   function closeTab(tab) {
     if (tab.isMain) return; // the environment's main channel is never closed
+    if (!confirmEndAgent(tab)) return;
     // Full close: end the channel everywhere (stop the agent, delete its
     // Telegram topic, drop it from the registry). Use the HTTP endpoint so it
     // works even when the session is dead (no live WebSocket) — a zombie channel
@@ -8397,6 +8409,7 @@
   $("chanUpdate").addEventListener("click", () => { if (active) handleClaudeUpdate(active); });
   $("chanCron").addEventListener("click", () => { $("cronOverlay").hidden = false; renderCrons(); });
   $("chanStop").addEventListener("click", () => {
+    if (!active || !confirmEndAgent(active)) return;
     sendTo(active, { type: "stop" });
   });
   // The per-agent menu, opened from the channel header — the same one a
