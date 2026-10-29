@@ -762,8 +762,11 @@
       padding: 12px 8px; overflow-y: auto;
     }
     body.has-groups #tabbar { border-radius: 0 var(--radius) var(--radius) 0; }
-    /* Cancel <main>'s gap between the two halves of the card. */
-    body.has-groups #groupRail { margin-right: -12px; }
+    /* The rail and the agents column sit flush (main's desktop gap is 0): the
+       rail has no right border and the two halves meet at one seam. No negative
+       margin — that used to cancel a 12px gap that the Teams layer removed, and
+       with gap:0 it only made the rail (and its active card) overlap the agents
+       column, which showed most in the collapsed dock. */
     .rail-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 8px 8px; }
     #railMini { border: none; background: none; padding: 2px 6px; color: var(--text-dim); font-size: 13px; }
     #railMini:hover { color: var(--amber); }
@@ -819,23 +822,26 @@
       font-size: 13px; color: var(--text-dim); padding: 8px 10px;
     }
     #groupRail #newGroup:hover { color: var(--amber); border-color: var(--amber); }
-    /* Collapsed to icons, like a dock: the names live in the tooltips. */
-    body.rail-mini #groupRail { width: 52px; padding: 12px 6px; }
+    /* Collapsed dock, in the spirit of the old tools column: a big icon with the
+       group name in a small label beneath it, centered — not an icon-only dock. */
+    body.rail-mini #groupRail { width: 68px; padding: 12px 6px; }
     body.rail-mini .rail-head { justify-content: center; padding: 0 0 8px; }
     body.rail-mini .rail-head .label,
-    body.rail-mini .rail-name, body.rail-mini .rail-count,
+    body.rail-mini .rail-count,
     body.rail-mini .rail-add, body.rail-mini .rail-del,
     body.rail-mini .rail-txt { display: none !important; }
-    body.rail-mini .rail-item { justify-content: center; padding: 6px 0; }
-    /* In the collapsed dock the icon IS the group — the name lives only in the
-       tooltip — so make it noticeably bigger here. The 52px dock (40px inside
-       its padding) leaves room for a 38px target. */
-    body.rail-mini .rail-icon { width: 38px; height: 38px; font-size: 24px; border-radius: 8px; }
-    body.rail-mini .rail-dot { position: absolute; top: 4px; right: 4px; }
+    body.rail-mini .rail-item { flex-direction: column; justify-content: center; gap: 3px; padding: 7px 2px; text-align: center; }
+    body.rail-mini .rail-icon { width: 34px; height: 34px; font-size: 22px; border-radius: 8px; }
+    /* The name sits under the icon; it is the whole point of this mode, so it is
+       shown (not hidden like the count), clipped to the dock's width. */
+    body.rail-mini .rail-name { display: block; flex: none; width: 100%; font-size: 10px; line-height: 1.15; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    body.rail-mini .rail-item.active .rail-name { color: var(--text); }
+    body.rail-mini .rail-dot { position: absolute; top: 4px; right: 14px; }
+    body.rail-mini #groupRail #newGroup { text-align: center; padding: 8px 0; }
 
     /* The agents column, narrowed to the selected group. */
     /* With a column the list header is the selected group's name; with no
-       column it is just "Agents" again (the "Ungrouped" view label would read
+       column it is just "Agents" again (the "Main" view label would read
        oddly when there is nothing to be ungrouped from). */
     body.has-groups #tabbar .side-label .sl-all { display: none; }
     body:not(.has-groups) #tabbar .side-label .sl-view { display: none; }
@@ -844,7 +850,7 @@
     #tabbar .group-body { padding-left: 0; }
     #tabbar .group.collapsed .group-body { display: flex; }
     /* The home agent is an agent like the others here: it shows in ITS group
-       (usually Ungrouped), not pinned into every one. */
+       (usually Main), not pinned into every one. */
     #tabbar:not([data-view="ungrouped"]) #ungrouped,
     #tabbar[data-view="ungrouped"] #groups,
     #tabbar .group:not(.in-view) { display: none; }
@@ -4557,7 +4563,7 @@
       if (gi && gi.textContent !== g.icon) gi.textContent = g.icon;
     }
     const g = groups.find((x) => String(x.id) === v);
-    $("viewLabel").textContent = g ? `${g.icon} ${g.nameEl.textContent}` : "Ungrouped";
+    $("viewLabel").textContent = g ? `${g.icon} ${g.nameEl.textContent}` : "Main";
     $("viewEmpty").hidden = tabsInView(v).length > 0 || v === "ungrouped";
     renderRail();
   }
@@ -4609,7 +4615,7 @@
       del.type = "button";
       del.className = "rail-del";
       del.textContent = "×";
-      del.title = "Ungroup (its agents move to Ungrouped)";
+      del.title = "Ungroup (its agents move to Main)";
       item.appendChild(del);
       del.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -4691,7 +4697,7 @@
     // dragend) nor while a name is being typed (a re-render would eat the input).
     if (dragGroupEl || railList.querySelector("input.rename")) return;
     const entries = [
-      { view: "ungrouped", icon: "📥", name: "Ungrouped" },
+      { view: "ungrouped", icon: "📥", name: "Main" },
       ...[...groupsEl.children].map((el) =>
         ({ view: String(el._group.id), icon: el._group.icon, name: el._group.nameEl.textContent, group: el._group })),
     ];
