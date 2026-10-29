@@ -1,5 +1,12 @@
 # Teams light, corporate dark, and a logo
 
+> **Follow-up (2026-10-29):** the owner kept the Teams *skin* (colours, logo,
+> avatars, bubbles, approval cards) but asked to drop the Teams *layout* changes
+> that shipped alongside it — the left app bar, the title-bar search box and the
+> `#chanChat`/`#chanDiff` channel tabs. The cockpit is back to its original
+> two-column layout (groups in their own left column, global tools in the
+> header), wearing this theme. The "Layout" parts below are historical.
+
 ## Why
 
 The cockpit read as playful and amber-heavy. The owner wanted something that
