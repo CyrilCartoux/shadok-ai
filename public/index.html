@@ -1128,6 +1128,11 @@
      between this bubble and the one before, so it keeps its own label — a
      wordless boundary the reader would otherwise never see. */
   .turn.user { align-self: flex-end; align-items: flex-end; }
+  /* Someone else's prompt (a teammate, a Telegram sender, a cron): on the
+     agent's side, still a human bubble — same tint as yours, only the agent is
+     white. The side and the name say who; a colour per person read as noise. */
+  .turn.user.other { align-self: flex-start; align-items: flex-start; }
+  .turn.user + .turn.user.new-speaker > .label { display: block; }
   .turn.claude { align-self: flex-start; }
   .bubble {
     padding: 9px 14px;
@@ -3047,7 +3052,7 @@
     hasReadonlyPreset,
     applyReadonlyPreset, isManagedProfile, profileSaveBody, secretUsers } from "/profile-card.js?v=__ASSET_V__";
   import { notifyState, BLINK_MS } from "/notify.js?v=__ASSET_V__";
-  import { echoAuthor } from "/echo-author.js?v=__ASSET_V__";
+  import { echoAuthor, isOwnPrompt } from "/echo-author.js?v=__ASSET_V__";
   import { dialPos, dialColor, arcSegments, dialTitle, SWEEP_DEG } from "/gauge-dial.js?v=__ASSET_V__";
   import { TOUR_STEPS, bubblePlacement, unionRect, visibleSteps } from "/tour-steps.js?v=__ASSET_V__";
   import { pickChannelSource, dirKey, serverSwapped } from "/channel-store.js?v=__ASSET_V__";
@@ -3105,6 +3110,7 @@
   window.hasReadonlyPreset = hasReadonlyPreset;
   window.applyReadonlyPreset = applyReadonlyPreset;
   window.echoAuthor = echoAuthor;
+  window.isOwnPrompt = isOwnPrompt;
   window.notifyState = notifyState;
   window.BLINK_MS = BLINK_MS;
   window.dialPos = dialPos;
@@ -3154,6 +3160,7 @@
     extractLiveText: () => "",
     livePreviewDecision: () => null,
     echoAuthor: () => "",
+    isOwnPrompt: () => true,
     notifyState: () => ({ color: null, badge: "", blink: false }),
     dialPos: () => 0,
     dialColor: () => "",
@@ -5920,6 +5927,32 @@
     return window.echoAuthor ? window.echoAuthor(msg) : "you";
   }
 
+  /** Which side a human prompt sits on: yours on the right, anyone else's on
+   *  the left — still a tinted human bubble, only the agent is white. The author
+   *  is kept on the turn so the side can be re-decided once `/me` answers
+   *  (`resideAllPrompts`). */
+  function markPromptSide(bubble, msg) {
+    const turn = bubble.parentElement;
+    turn.dataset.from = msg?.from ?? "";
+    turn.dataset.origin = msg?.origin ?? "";
+    if (msg?.auto) turn.dataset.auto = "1";
+    // A run of prompts shows one label — but only while it is ONE speaker.
+    const prev = turn.previousElementSibling;
+    const who = turn.querySelector(":scope > .label")?.firstChild?.textContent ?? "";
+    const prevWho = prev?.classList.contains("user") ? prev.querySelector(":scope > .label")?.firstChild?.textContent ?? "" : who;
+    turn.classList.toggle("new-speaker", who !== prevWho);
+    applyPromptSide(turn);
+  }
+  function applyPromptSide(turn) {
+    const msg = { from: turn.dataset.from, origin: turn.dataset.origin, auto: turn.dataset.auto === "1" };
+    const own = window.isOwnPrompt ? window.isOwnPrompt(msg, me?.name) : true;
+    turn.classList.toggle("other", !own);
+  }
+  function resideAllPrompts() {
+    for (const turn of document.querySelectorAll(".turn.user[data-origin]")) applyPromptSide(turn);
+  }
+  window.addEventListener("shadok-bridge-ready", resideAllPrompts);
+
   function addTurn(tab, role, who, text, extraClass, at) {
     // Time of the last message in the channel list, relative ("3m ago"). Every
     // message (replayed history or live) carries `at`; the last one wins.
@@ -7423,6 +7456,7 @@
             // SAME echoAuthor the live echo uses: "Ada · telegram"
             // for a Telegram message, "you" for your own web prompt.
             const b = addTurn(t, "user", echoAuthorLabel({ from: h.from, origin: h.origin }), h.text, "hist", h.at);
+            markPromptSide(b, { from: h.from, origin: h.origin });
             stampMsgIds(t, b.parentElement, h.ids);
           } else {
             const b = addTurn(t, "claude", "claude", h.text, "hist", h.at);
@@ -7537,6 +7571,7 @@
         closeActivity(t);
         {
           const b = addTurn(t, "user", echoAuthorLabel(msg), msg.text, null, Date.now());
+          markPromptSide(b, msg);
           awaitPromptId(b, msg.text);
           markUnreadBoundary(t, b.parentElement);
         }
@@ -7993,7 +8028,11 @@
     // Sending = going back to the bottom, whatever happens (even after scrolling
     // up): you want to see your message and the answer that follows.
     t.transcriptEl._stickBottom = true;
-    awaitPromptId(addTurn(t, "user", "you", text, null, Date.now()), text);
+    {
+      const b = addTurn(t, "user", "you", text, null, Date.now());
+      markPromptSide(b, {});
+      awaitPromptId(b, text);
+    }
     startTurnTimer(t);
     setTabMood(t, "working");
     // Remember this channel's last sent prompt, so Escape (an interruption) can
@@ -9532,6 +9571,8 @@
     $("signOut").hidden = !named;
     $("whoSep").hidden = !named;
     if (named) $("whoAmI").textContent = "Signed in as " + me.name + " · " + me.role;
+    // Prompts drawn before we knew who you are get their side now.
+    resideAllPrompts();
     // Security: for a signed-in person (or the lone admin of a no-password
     // instance, who is everybody). The server answers 403 otherwise.
     $("securityBtn").hidden = !(me?.name || me?.role === "admin");
