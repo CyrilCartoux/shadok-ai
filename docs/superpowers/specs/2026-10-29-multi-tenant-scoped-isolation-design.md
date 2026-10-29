@@ -5,6 +5,12 @@ conversation; to be reviewed the next day. Points settled in that conversation
 are marked **[DECIDED]**; points deliberately left open are marked **[OPEN]**.
 Nothing here is built yet; this document is the thing to approve before a plan.
 
+Updated the same evening after a **builder review** (a reviewer agent read the
+doc and listed where a builder would have to guess). Its minor calls are folded
+in and marked; its **four questions that only the owner can answer** are in
+*Open decisions*, ranked — the first is a viability blocker the first draft
+missed.
+
 ## Intent and why
 
 Turn shadok from a single shared cockpit into the cockpit of a **hybrid company**
@@ -80,6 +86,17 @@ Because the three secret scopes land on the same three OS identities, there is
 ## Users and groups
 
 - Accounts gain a **group** concept (new): a group has **members** (people).
+- **[CALL, builder review]** Real per-person accounts become **mandatory** in a
+  multi-tenant cockpit — the whole ACL rests on "which person is calling", so the
+  password-optional / dormant single-admin mode (`SHADOK_GUI_PASSWORD`, "with no
+  password everything is dormant") cannot coexist with teams. It survives only as
+  the **degenerate single-tenant case** (no teams → everything `instance` scope →
+  behaves exactly as today). An instance that defines a team must have accounts
+  on.
+- **[CALL, builder review]** OS users + HOMEs are **admin-provisioned** at
+  onboarding (an admin with the root orchestrator creates `u_<person>` /
+  `g_<team>`), not self-service signup, for v1. A web account can exist before its
+  OS user does; it simply cannot own/run an agent until provisioned.
 - **[DECIDED]** Membership is **many-to-many** — a person can be in several
   groups (e.g. COMEX *and* TECH).
 - A person's **visibility** is the **union** of: their own `owner` agents ∪ every
@@ -246,18 +263,75 @@ reference any name) does not survive teams. It becomes **scoped**:
 - **Backward-compatible migration**: an existing single-user instance, with no
   teams defined, must keep behaving exactly as today (everything is `instance`
   scope).
+- **[CALL, builder review] Restart-survival is preserved, not traded away.**
+  Agents run in detached tmux sessions that outlive the server and are re-adopted
+  on boot (`reconcileOnBoot`, invariants 7/23). Under per-user spawns this
+  property **must still hold**: the root orchestrator has to enumerate, reattach
+  to, and tail panes **across** OS users after a restart, and tail each agent's
+  transcript from **its own HOME** (a different uid). This is a product invariant,
+  not a mechanism detail — the setuid mechanics are the builder's, but dropping
+  restart-survival is out of bounds.
+- **[CALL, builder review] The loopback auth must survive the uid change.** An
+  agent authenticates back to the server with `SHADOK_SESSION_KEY` /
+  `SHADOK_AUTH` from its child env (invariant 33). Those must keep working when
+  the child runs as a different OS user and reads from a different HOME — the
+  credentials are env-carried, so the change is the spawn uid, not the auth model;
+  the plan must verify this end-to-end, not assume it.
+- **[CALL, builder review] `instance` scope runs as a dedicated, non-privileged
+  "instance" OS user** — not the root orchestrator user. So even an
+  `instance`-scoped agent receives its secrets only by **injection** and cannot
+  read the server-owned vault file directly, keeping the "vault leak closed"
+  property uniform across all three scopes. (Resolves the draft's open item on
+  this.)
 
 ## Open decisions to revisit
 
-- **Admin break-glass over personal agents** — v1 says *no* (fully private);
-  revisit the next day.
+### Raised by the builder review — only the owner can answer (ranked)
+
+1. **Claude subscription across per-user HOMEs — VIABILITY BLOCKER (the first
+   draft missed this).** shadok runs on the *user's Claude subscription*, and
+   `claude` signs in through one machine keychain / one `claude auth login`
+   (`src/claude-auth.ts`). But the design gives every scope its own HOME with its
+   own `~/.claude`. So: do ~55 OS users each sign in **separately** (≈55
+   subscriptions / 55 OAuth logins — probably a non-starter), or is **one**
+   subscription's credential **shared/copied into every HOME** — and if so, how
+   (the keychain is per-OS-user; the OAuth token lives per-HOME)? This decides
+   whether the feature is viable at all on one subscription and dictates a
+   credential-propagation subsystem that does not exist today. **Nothing else can
+   be planned until this is settled.**
+
+2. **Where does this run — bare privileged host vs. one big container?** The
+   design says "no containers, server as root, setuid per spawn" = a classic
+   Linux multi-user host. Production today is **Docker, one container per
+   instance** (pid 1 is the app, root inside). Is multi-tenant meant to (a)
+   replace per-container with **one privileged server on a bare host**, or (b)
+   run **~55 OS users inside a single container**? This reshapes provisioning,
+   the launch-dir lock (`src/lock.ts`), volume layout, the Docker-gated SSH
+   identity (`src/ssh.ts`), and whether the VPS recipes survive.
+
+3. **Telegram in v1, or deferred?** The Telegram bridge is built around exactly
+   **one DM owner** (`dmGate`, `…-telegram-owner.json`, one bot = one owner,
+   `src/telegram.ts`). Per-person/per-team visibility over Telegram is a major
+   surface — a bot-per-person, per-DM account mapping, or topics-as-teams — i.e.
+   a near-rewrite of the bridge's identity model. Recommendation: **web-only
+   multi-tenancy in v1, Telegram stays single-owner / deferred** — confirm.
+
+4. **Is there a lead / home agent per scope?** Today there is exactly one home
+   channel ("general") and one lead agent per instance, with hard invariants
+   around it (`isHomeChannel`, first-agent, greeting — invariants 18/35). In a
+   multi-tenant cockpit: a lead **per person**, **per team**, **one global**, or
+   **none**? The onboarding/greeting/first-agent machinery assumes a single home,
+   so this ripples through `channels.ts`, `first-agent.ts`, `greeting.ts`.
+
+### Still open from the original draft
+
 - **Naming**: "team" / "space" vs reusing "group"; relationship to the cosmetic
   tab-group.
 - **Secret resolution**: confirm the owner→team→instance precedence; whether a
   profile may pin a scope explicitly rather than rely on fallback.
-- **`instance` scope**: its own dedicated OS user vs reusing the server user.
-- **Provisioning**: how and where OS users + HOMEs are created at onboarding;
-  single-host now, multi-host later.
+- **Admin break-glass over personal agents** — v1 says *no* (fully private),
+  needs settling before the action-gating code is written.
+- **Multi-host**: single-host for v1; multiple hosts later.
 - **Per-person disk quota**: deferred.
 
 ## Left to the builder
