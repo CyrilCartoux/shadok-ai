@@ -790,6 +790,12 @@
   @media (max-width: 640px) {
     #tabbar .side-label .sl-view, #viewEmpty { display: none; }
   }
+  .load-older {
+    align-self: center; margin: 4px 0 10px;
+    font-size: 12px; color: var(--text-dim);
+    border: 1px dashed var(--line); padding: 6px 12px;
+  }
+  .load-older:hover { color: var(--amber); border-color: var(--amber); }
   .icon-picker {
     position: fixed; z-index: 60;
     background: var(--menu-bg); border: 1px solid var(--line); border-radius: 8px;
@@ -2742,7 +2748,9 @@
   window.buildMessageLink = buildMessageLink;
   window.parseMessageLink = parseMessageLink;
   window.samePrompt = samePrompt;
-  import { GROUP_ICONS, UNGROUPED, randomGroupIcon, resolveGroupView, groupMood, cleanGroupIcon } from "/group-nav.js?v=__ASSET_V__";
+  import { GROUP_ICONS, UNGROUPED, randomGroupIcon, resolveGroupView, groupMood, cleanGroupIcon, idleMood, splitHistory } from "/group-nav.js?v=__ASSET_V__";
+  window.idleMood = idleMood;
+  window.splitHistory = splitHistory;
   window.GROUP_ICONS = GROUP_ICONS;
   window.UNGROUPED = UNGROUPED;
   window.randomGroupIcon = randomGroupIcon;
@@ -2885,6 +2893,10 @@
     resolveGroupView: (saved, ids) => ((ids || []).map(String).includes(String(saved)) ? String(saved) : "ungrouped"),
     groupMood: (moods) => ["needs-answer", "unread", "working"].find((m) => (moods || []).includes(m)) || null,
     cleanGroupIcon: (t) => String(t ?? "").trim() || null,
+    // Before the module: no mood for a closed tab (the next 4 s poll repaints),
+    // and the whole history drawn — never a history that silently lost turns.
+    idleMood: () => null,
+    splitHistory: (turns) => ({ older: [], recent: turns || [] }),
     uploadFailure: (status, contentType) =>
       /json/i.test(contentType || "") ? null : status === 413 ? "too large (over the server's upload limit)" : `upload failed (HTTP ${status || "?"})`,
   };
@@ -3619,6 +3631,7 @@
   }
 
   function openTabMenu(tab, x, y) {
+    wakeTab(tab); // its actions go through the socket
     tabMenu.replaceChildren();
     // Header: WHO this agent is. The profile is what qualifies it (role,
     // guardrails, secrets); it is chosen at spawn and then became invisible.
@@ -4157,6 +4170,9 @@
     groupView = String(v);
     localStorage.setItem(VIEW_KEY(), groupView);
     applyView();
+    // Lazy loading is by group: showing a group connects all its agents (the
+    // active one already is), so moving between them inside it is instant.
+    for (const t of tabsInView(currentView())) wakeTab(t);
     // Picking a group shows one of ITS agents: staying on an agent that is no
     // longer in the list would leave the chat and the list disagreeing.
     // The home agent is visible in every group, but picking a group still means
@@ -4498,6 +4514,25 @@
   // live; a renamed channel renames its tab; a channel that left the registry
   // (ended elsewhere) closes its tab.
   let lastChannelIds = new Set();
+  /**
+   * The mood of a tab with no socket, from the server's `live` summary. The
+   * first sight of an agent sets its baseline, so what it said BEFORE this page
+   * loaded is not announced as unread — the same rule as a connected tab, which
+   * replays its history as already read.
+   */
+  function paintIdleMood(t, live) {
+    // 0 when nothing was seen yet: whatever it says from now on is new.
+    if (t.idleSeenAt === undefined) t.idleSeenAt = live?.lastAt ?? 0;
+    const mood = window.idleMood(live, t.idleSeenAt);
+    // An unread mark stays until the tab is looked at, even once the poll no
+    // longer reports anything newer.
+    const keep = t.btnEl.classList.contains("unread") ? "unread" : null;
+    const next = mood || keep;
+    if (moodClass(t) !== next) setTabMood(t, next);
+  }
+  const moodClass = (t) =>
+    ["needs-answer", "unread", "working"].find((m) => t.btnEl.classList.contains(m)) || null;
+
   async function syncChannels() {
     if (restoring) return;
     let chans;
@@ -4529,6 +4564,7 @@
         // reload, or the menu would offer to attach an agent that already is.
         t.parent = c.parent || null;
         setCrons(t, c.crons);
+        if (t.dormant) paintIdleMood(t, c.live);
         // A mute set on another device lands here; persist:false, the registry
         // is already the source of this value.
         if (typeof c.muted === "boolean" && c.muted !== !!t.muted) setMuted(t, c.muted, false);
@@ -4563,12 +4599,16 @@
           nt.nameEl.textContent = c.name;
         }
         if (isMain(c)) markMainTab(nt);
+        // Lazy like the restore: connected only if it is on screen (or became
+        // the active tab of an empty cockpit); otherwise the poll carries its mood.
+        const onScreen = nt === active || nt.isMain || (railShown() && viewOfTab(nt) === currentView());
         launchTab(nt, {
           cwd: c.cwd,
           resume: c.sessionId,
           branch: c.branch || undefined,
           repo: c.repo || serverCwd || undefined,
-        });
+        }, { connect: onScreen });
+        if (nt.dormant) paintIdleMood(nt, c.live);
       }
     }
     // A channel that was in the registry and is now gone was ended elsewhere.
@@ -4625,6 +4665,7 @@
       persistDraft(active);
     }
     active = tab;
+    wakeTab(tab);
     showTabGroup(tab);
     // A reload must come back to the channel you were watching: remember its
     // sessionId (outside the initial restore, which replays the activates itself).
@@ -5464,6 +5505,61 @@
     return window.echoAuthor ? window.echoAuthor(msg) : "you";
   }
 
+  /** Draws replayed history turns at the end of a tab's transcript. */
+  function drawHistory(t, turns) {
+    for (const h of turns) {
+      if (h.role === "bash") {
+        addBashCard(t, h, h.at);
+      } else if (h.role === "file") {
+        // A file the agent delivered (SendUserFile) — its card survives the
+        // reload so the download / image stays reachable.
+        addFileCard(t, h.files || [], h.at);
+      } else if (h.role === "user" && h.compaction) {
+        // A compaction summary: a huge "This session is being continued…"
+        // block. Fold it into a collapsible box so it doesn't bury the chat.
+        addCompactionCard(t, h.text, h.at);
+      } else if (h.role === "user") {
+        // Who sent it, recovered from the stripped ⟦…⟧ header, through the
+        // SAME echoAuthor the live echo uses: "Ada · telegram"
+        // for a Telegram message, "you" for your own web prompt.
+        const b = addTurn(t, "user", echoAuthorLabel({ from: h.from, origin: h.origin }), h.text, "hist", h.at);
+        stampMsgIds(t, b.parentElement, h.ids);
+      } else {
+        const b = addTurn(t, "claude", "claude", h.text, "hist", h.at);
+        decorateBang(t, b, h.text);
+        stampMsgIds(t, b.parentElement, h.ids);
+        // A hidden prompt (cron / notification) ran before this turn: keep
+        // its own label instead of merging it onto the previous answer
+        // (same `.after-gap` boundary the live stream uses).
+        if (h.afterInternal) b.parentElement.classList.add("after-gap");
+      }
+    }
+  }
+
+  /**
+   * The older part of a replayed history, behind a button at the top. Drawn on
+   * demand and moved above what is already there, keeping the reader's place.
+   */
+  function addLoadOlder(t, older) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "load-older";
+    btn.textContent = `Load ${older.length} older message${older.length === 1 ? "" : "s"}`;
+    t.transcriptEl.appendChild(btn);
+    btn.addEventListener("click", () => {
+      const box = t.transcriptEl;
+      const from = box.children.length;
+      const height = box.scrollHeight, top = box.scrollTop;
+      const lastAt = t.lastMsgAt; // older turns must not become "the last message"
+      drawHistory(t, older);
+      for (const el of [...box.children].slice(from)) box.insertBefore(el, btn);
+      btn.remove();
+      t.lastMsgAt = lastAt;
+      renderLastAt(t);
+      box.scrollTop = top + (box.scrollHeight - height);
+    });
+  }
+
   function addTurn(tab, role, who, text, extraClass, at) {
     // Time of the last message in the channel list, relative ("3m ago"). Every
     // message (replayed history or live) carries `at`; the last one wins.
@@ -6220,7 +6316,8 @@
 
   // ── Link ────────────────────────────────────────────────
   /** Starts a channel's session (from the form or a restore). */
-  function launchTab(t, msg) {
+  function launchTab(t, msg, opts) {
+    const connect = !opts || opts.connect !== false;
     t.cwd = msg.cwd || "(server directory)";
     if (!t.customName) t.nameEl.textContent = basename(msg.cwd || "") || "agent " + t.id;
     t.launchMsg = msg;      // remembered so a dropped link can reconnect
@@ -6233,6 +6330,27 @@
     if (typeof msg.mirror === "boolean") setMirror(t, msg.mirror, false);
     t.closing = false;      // set when the user closes the tab (no reconnect then)
     t.reconnectAttempts = 0;
+    // Lazy loading: a tab that is not on screen keeps its launch parameters and
+    // opens no socket — so it costs no history parse, no DOM, and does not wake
+    // a dormant agent's process. `wakeTab` connects it when it is shown; until
+    // then its mood comes from GET /channels (`live`, see syncChannels).
+    if (!connect) {
+      t.dormant = true;
+      setTabState(t, "dead", "not loaded — opens when shown");
+      return;
+    }
+    t.dormant = false;
+    openLink(t);
+  }
+  /** Connect a lazily-restored tab (no-op on one already connected). */
+  function wakeTab(t) {
+    if (!t || !t.dormant || t.closing || !t.launchMsg) return;
+    t.dormant = false;
+    t.reconnectAttempts = 0;
+    // Whatever the poll painted described the agent from afar; the socket's own
+    // events (working, dialog, history) take over — except an unread answer,
+    // which stays until the tab is actually looked at.
+    if (!t.btnEl.classList.contains("unread")) setTabMood(t, null);
     openLink(t);
   }
 
@@ -6287,7 +6405,7 @@
    *  machine/tab comes back (online / visible), the common laptop-wake case. */
   function reconnectAllNow() {
     for (const t of tabs) {
-      if (t.closing || !t.sessionId) continue;
+      if (t.closing || !t.sessionId || t.dormant) continue;
       const st = t.ws && t.ws.readyState;
       if (st === WebSocket.OPEN || st === WebSocket.CONNECTING) continue;
       if (t.reconnectTimer) clearTimeout(t.reconnectTimer);
@@ -6936,32 +7054,14 @@
         t.transcriptEl.innerHTML = "";
         t.unreadSep = null; // the separator element went with the wipe
         addTurn(t, "system", "", "— resumed session history —");
-        for (const h of msg.turns) {
-          if (h.role === "bash") {
-            addBashCard(t, h, h.at);
-          } else if (h.role === "file") {
-            // A file the agent delivered (SendUserFile) — its card survives the
-            // reload so the download / image stays reachable.
-            addFileCard(t, h.files || [], h.at);
-          } else if (h.role === "user" && h.compaction) {
-            // A compaction summary: a huge "This session is being continued…"
-            // block. Fold it into a collapsible box so it doesn't bury the chat.
-            addCompactionCard(t, h.text, h.at);
-          } else if (h.role === "user") {
-            // Who sent it, recovered from the stripped ⟦…⟧ header, through the
-            // SAME echoAuthor the live echo uses: "Ada · telegram"
-            // for a Telegram message, "you" for your own web prompt.
-            const b = addTurn(t, "user", echoAuthorLabel({ from: h.from, origin: h.origin }), h.text, "hist", h.at);
-            stampMsgIds(t, b.parentElement, h.ids);
-          } else {
-            const b = addTurn(t, "claude", "claude", h.text, "hist", h.at);
-            decorateBang(t, b, h.text);
-            stampMsgIds(t, b.parentElement, h.ids);
-            // A hidden prompt (cron / notification) ran before this turn: keep
-            // its own label instead of merging it onto the previous answer
-            // (same `.after-gap` boundary the live stream uses).
-            if (h.afterInternal) b.parentElement.classList.add("after-gap");
-          }
+        {
+          // The last HISTORY_FIRST turns now; the older ones behind a button, so
+          // opening an agent with a long past does not draw it all. A link to an
+          // older message draws everything (splitHistory), or it lands nowhere.
+          const want = pendingDeepLink?.msg || window.parseMessageLink(location.hash)?.msg || null;
+          const { older, recent } = window.splitHistory(msg.turns, undefined, want);
+          if (older.length) addLoadOlder(t, older);
+          drawHistory(t, recent);
         }
         break;
       case "ready":
@@ -9918,20 +10018,19 @@
       const savedActive = window.parseMessageLink(location.hash)?.agent || localStorage.getItem("cp.activeSession");
       let targetIdx = pending.findIndex((p) => p.t.sessionId === savedActive);
       if (targetIdx < 0) targetIdx = 0;
+      // Lazy loading: every tab gets its launch parameters, none connects yet.
+      // Activating the target connects it FIRST (its transcript appears fast),
+      // and through the groups column the rest of its group; the home agent is
+      // connected too, since it is on screen whatever group is shown. Every
+      // other agent connects when its group (or itself) is shown.
+      for (const p of pending) launchTab(p.t, p.msg, { connect: false });
       activate(pending[targetIdx].t);
+      for (const p of pending) if (p.t.isMain) wakeTab(p.t);
       // The tab LIST is complete (all tabs exist with their session ids), so
       // persistence is safe to re-enable now — even though sessions connect below.
       restoring = false;
       persistChannels();
       if (savedGroups.length) persistGroups(); // sync groups (e.g. from localStorage fallback)
-      // 2) Connect the VISIBLE channel first (its transcript appears fast), then
-      //    ALL the others right after — no artificial delay. (An earlier 120ms
-      //    stagger made the other channels slow to load; the server handles the
-      //    concurrent resumes fine, so we just prioritise the active one.)
-      launchTab(pending[targetIdx].t, pending[targetIdx].msg);
-      for (let i = 0; i < pending.length; i++) {
-        if (i !== targetIdx) launchTab(pending[i].t, pending[i].msg);
-      }
     } else {
       // Nothing to restore: the invitation — unless the server said it is
       // starting this instance's lead agent (read above, before this first

@@ -86,6 +86,15 @@ Enter to skip; you can add it later from the web UI).
   its icons. A dot on a group you are not looking at says one of its agents
   is waiting for you, has an unread answer, or is working. On a phone nothing
   changes: the agents sheet still lists every group.
+- **Loads what you look at** — opening the cockpit connects only the agent on
+  screen, the rest of its group and the home agent; another group's agents
+  connect when you pick that group (on a phone, an agent when you pick it). An
+  agent that is not connected yet still shows when it works, asks you
+  something (with the chime) or has a new answer, from the agent list the page
+  already polls. A conversation opens on its last 30 turns, with *Load older*
+  for the rest (up to the 100 the server replays); a link to an older message
+  draws everything. What the browser draws has no effect on the agent's own
+  context.
 - **Worktree isolation** — spawned agents get their own git worktree and branch
   by default, so parallel agents never collide. Work is never auto-discarded:
   an empty worktree is reclaimed on close, anything with changes or commits
