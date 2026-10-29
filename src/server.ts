@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual, createHmac } from "node:crypto";
 import { newRequest, askVerdict, approveVerdict, cancelVerdict, dueRequests, expire, upsertRequest, requestsFor, describeRequest, loadRequests, saveRequests, isOpen, REQUEST_TTL_MS, type AdminRequest, type RequestKind } from "./admin-requests.js";
 import { recordEvent, loadEvents, saveEvents, inboxFor, markSeen, notMeEffect, describeEvent, type SecEvent } from "./security-events.js";
-import { execFile, spawn as spawnChild } from "node:child_process";
+import { execFile, execFileSync, spawn as spawnChild } from "node:child_process";
 import type { IncomingMessage } from "node:http";
 import fs from "node:fs";
 import os from "node:os";
@@ -38,6 +38,7 @@ import { PtyPilot } from "./session.js";
 import { ensureClaudeHome, ensureProjectTrusted,
   getDefaultModel,
   setDefaultModel,
+  parseClaudeVersion,
 } from "./claude-home.js";
 import { authStatus, cancelLogin, startLogin, submitLoginCode } from "./claude-auth.js";
 import { readTokenExpiry } from "./claude-creds.js";
@@ -52,7 +53,10 @@ import { readGroundAt } from "./ground.js";
 import { homeGreetingBrief } from "./greeting.js";
 import { ensureSshIdentity } from "./ssh.js";
 import { openBrowser } from "./open-browser.js";
-import { parseSkillMeta, prepromptParts, type PrepromptPart } from "./preprompt.js";
+import {
+  parseSkillMeta, prepromptParts, prepromptFingerprint, stalenessReasons,
+  LEGACY_FINGERPRINT, type PrepromptPart, type StaleReason,
+} from "./preprompt.js";
 import { ensureSpawnHelperExecutable } from "./node-pty-fix.js";
 import { TmuxPilot, tmuxAvailable, tmuxHasSession, tmuxKillSession, tmuxPaneCwd } from "./tmux.js";
 import { scanUsage, sessionFilePath, tailSession, clearTailPos, seedTailPos, isNothingToShow, type TokenUsage } from "./tail.js";
@@ -167,6 +171,8 @@ import {
   setThemeForCwd,
   twoFactorForCwd,
   setTwoFactorForCwd,
+  backendForCwd,
+  setBackendForCwd,
   type TelegramPatch,
 } from "./config.js";
 import {
@@ -261,6 +267,19 @@ import { bindRefusal, originAllowed, parseOrigins, resolveHost,
   browserOrigin,
 } from "./net.js";
 import { pctFromUsage, windowForModel } from "./context.js";
+import {
+  BACKEND_PRESETS,
+  backendEnv,
+  backendFor,
+  backendSaveVerdict,
+  instanceEnv,
+  joinUrl,
+  looksLikeMessage,
+  parseModelList,
+  testFailure,
+  testRequestBody,
+  type Backend,
+} from "./backend.js";
 import { availableModels, MODEL_FAMILIES } from "./claude-models.js";
 import { startHeartbeat } from "./heartbeat.js";
 import {
@@ -447,6 +466,7 @@ async function startFirstAgent(): Promise<void> {
       port: boundPort,
       cookie: tgCookie(),
       cwd: process.cwd(),
+      customBackend: instanceBackend().kind === "custom",
       // `start` carries no name, so the channel is named once the server has
       // told us its session id.
       onReady: (sessionId, name) => {
@@ -1639,7 +1659,22 @@ app.get("/version", (_req, res) => res.json(versionState()));
 // account login comes from `claude auth status`; the token expiry is read from
 // the credentials store (never the token itself) and merged in, so the version
 // menu can show WHO is signed in and WHEN a re-login will be needed.
-app.get("/auth", async (_req, res) => res.json({ ...(await authStatus()), ...readTokenExpiry() }));
+// `backend: "custom"` when the whole instance runs on a custom model backend
+// (src/backend.ts): the page then never opens the sign-in card, since no agent
+// here needs the subscription. The probe still runs — a mixed setup's
+// subscription agents still need to know.
+app.get("/auth", async (_req, res) =>
+  res.json({
+    ...(await authStatus()),
+    ...readTokenExpiry(),
+    ...customBackendFields(),
+  }),
+);
+
+function customBackendFields(): { backend?: "custom"; backendModel?: string | null } {
+  const b = instanceBackend();
+  return b.kind === "custom" ? { backend: "custom", backendModel: b.model } : {};
+}
 
 app.post("/auth/login", async (req, res) => {
   // `force` is a deliberate "re-login now" from a signed-in instance (the
@@ -1666,6 +1701,133 @@ app.post("/auth/code", async (req, res) => {
 app.delete("/auth/login", (_req, res) => {
   cancelLogin();
   res.json({ ok: true });
+});
+
+// --- Model backend (src/backend.ts) ---------------------------------------
+// The instance-wide source for every agent's backend variables: the backend
+// chosen in the cockpit if any, else shadok's own environment. Read on every
+// spawn, so a change applies to the next agent started without a restart.
+function instanceBackendSource(): Record<string, string | undefined> {
+  return instanceEnv(process.env, backendForCwd(loadConfig(), process.cwd()));
+}
+function instanceBackend(): Backend {
+  return backendFor(backendEnv(instanceBackendSource(), {}));
+}
+
+// What is configured, WITHOUT the key (only whether there is one), and the
+// presets the onboarding card offers. `source` tells the card whether a change
+// here can take effect: an env-launched backend is shadowed by nothing but a
+// saved one, and the card says so rather than pretend.
+app.get("/backend", (_req, res) => {
+  const saved = backendForCwd(loadConfig(), process.cwd());
+  const b = instanceBackend();
+  res.json({
+    presets: BACKEND_PRESETS,
+    source: saved ? "cockpit" : b.kind === "custom" ? "environment" : null,
+    current:
+      b.kind === "custom"
+        ? { baseUrl: b.baseUrl, model: b.model, contextWindow: b.contextWindow, hasKey: !!saved?.authToken }
+        : null,
+  });
+});
+
+// Save (or, with {clear:true}, forget) the backend. Admin, browser only: it
+// decides where every future agent sends its prompts — and with them, the
+// code it reads. Running agents keep the backend they were spawned with.
+app.put("/backend", (req, res) => {
+  if (!accountAdmin(req, res)) return;
+  const cfg = loadConfig();
+  if (req.body?.clear === true) {
+    setBackendForCwd(cfg, process.cwd(), null);
+    console.log("backend: back to the Claude subscription");
+    return res.json({ ok: true, current: null });
+  }
+  const v = backendSaveVerdict(req.body, backendForCwd(cfg, process.cwd()));
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  setBackendForCwd(cfg, process.cwd(), v.value);
+  console.log(`backend: ${v.value.baseUrl} · ${v.value.model}`);
+  // The sign-in card may have started a `claude auth login` child before the
+  // user chose another model: it would wait on stdin for ever.
+  cancelLogin();
+  res.json({ ok: true, current: { baseUrl: v.value.baseUrl, model: v.value.model } });
+  // A brand-new instance had no way to start its lead agent until now.
+  void startFirstAgent();
+});
+
+/** A server-side request with a deadline: a backend that never answers must
+ *  not hang the card. */
+async function backendFetch(url: string, init: RequestInit = {}, ms = 20_000): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
+}
+
+/** The key to test with: the one typed, else the saved one for the SAME server. */
+function backendKey(body: { authToken?: unknown; baseUrl?: unknown }): string {
+  const typed = typeof body.authToken === "string" ? body.authToken.trim() : "";
+  if (typed) return typed;
+  const saved = backendForCwd(loadConfig(), process.cwd());
+  const url = typeof body.baseUrl === "string" ? body.baseUrl.trim().replace(/\/+$/, "") : "";
+  return saved && saved.baseUrl === url ? saved.authToken ?? "" : "";
+}
+
+// One real round trip — URL, key, model AND the Anthropic format — before
+// anything is saved. Otherwise a wrong address shows up only as the first
+// agent sitting on an error, which is exactly the opaque failure to avoid.
+app.post("/backend/test", async (req, res) => {
+  if (!accountAdmin(req, res)) return;
+  const v = backendSaveVerdict(req.body);
+  if (!v.ok) return res.json({ ok: false, error: v.error });
+  const key = backendKey(req.body ?? {});
+  const started = Date.now();
+  try {
+    const r = await backendFetch(joinUrl(v.value.baseUrl, "/v1/messages"), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        // Exactly what Claude Code sends with ANTHROPIC_AUTH_TOKEN — a bearer
+        // and nothing else — so a test that passes predicts an agent that works.
+        ...(key ? { authorization: `Bearer ${key}` } : {}),
+      },
+      body: JSON.stringify(testRequestBody(v.value.model)),
+    }, 60_000);
+    const text = await r.text();
+    if (!r.ok) return res.json({ ok: false, error: testFailure(r.status, text) });
+    let json: unknown = null;
+    try { json = JSON.parse(text); } catch { /* judged below */ }
+    if (!looksLikeMessage(json))
+      return res.json({ ok: false, error: "the server answered, but not in the Anthropic format — an OpenAI-only server needs a proxy such as LiteLLM in front" });
+    const reply = ((json as { content: { type?: string; text?: string }[] }).content.find((c) => c.type === "text")?.text ?? "").trim();
+    res.json({ ok: true, ms: Date.now() - started, reply: reply.slice(0, 80) });
+  } catch (e) {
+    const err = e as Error & { cause?: { code?: string } };
+    const why =
+      err.name === "TimeoutError" ? "no answer within 60 s"
+      : err.cause?.code === "ECONNREFUSED" ? "nothing is listening at this address — is the server started?"
+      : err.cause?.code === "ENOTFOUND" ? "this host name does not resolve"
+      : err.message;
+    res.json({ ok: false, error: why });
+  }
+});
+
+// The models a server offers, for the card's picker: Ollama's /api/tags first
+// (it lists what is PULLED, which is the useful answer), then the OpenAI-style
+// /v1/models most others serve. Nothing found is an empty list, never an
+// error — the model field stays free text.
+app.post("/backend/models", async (req, res) => {
+  if (!accountAdmin(req, res)) return;
+  const base = typeof req.body?.baseUrl === "string" ? req.body.baseUrl.trim() : "";
+  if (!/^https?:\/\//i.test(base)) return res.json({ models: [] });
+  const key = backendKey(req.body ?? {});
+  const headers: Record<string, string> = key ? { authorization: `Bearer ${key}`, "x-api-key": key } : {};
+  for (const p of ["/api/tags", "/v1/models"]) {
+    try {
+      const r = await backendFetch(joinUrl(base, p), { headers }, 5_000);
+      if (!r.ok) continue;
+      const models = parseModelList(await r.json());
+      if (models.length) return res.json({ models });
+    } catch { /* try the next shape */ }
+  }
+  res.json({ models: [] });
 });
 
 // The header's GitHub button. Proxied through us so the browser never talks to
@@ -3331,6 +3493,28 @@ function ledgerReflex(): string | null {
  * then assumes the standard window, which `effectiveWindow` corrects if the
  * session ever proves it wrong.
  */
+/** The backend an agent on this profile talks to — the same inputs
+ *  `makePilot` hands the process, so the verdict cannot disagree with it. */
+function sessionBackend(profileName?: string | null): Backend {
+  const profile = profileName ? getProfile(profileName) : undefined;
+  const secretEnv = secretsFor(profile?.secrets);
+  return backendFor({ ...backendEnv(instanceBackendSource(), secretEnv), ...secretEnv });
+}
+
+/** The profile a `start` will run with, known BEFORE the spawn resolves its
+ *  id — only for the sign-in gate. Mirrors the later resolution: on a resume
+ *  the channel's stored profile wins over the message's. */
+function gateProfile(msg: { profile?: string | null; resume?: string }): string | null {
+  if (msg.resume) {
+    const found = resolveResumeId(loadChannels().map((c) => c.sessionId), msg.resume);
+    if (found.ok) {
+      const stored = loadChannels().find((c) => c.sessionId === found.id)?.profile;
+      if (stored != null) return stored;
+    }
+  }
+  return msg.profile ?? null;
+}
+
 function sessionModelSetting(profileName?: string | null, agentModel?: string | null): string | null {
   // The agent's own choice comes FIRST, and this is not cosmetic: the gauge
   // resolves its window from this string (`windowForModel`, invariant 22), so
@@ -3390,6 +3574,52 @@ function installedCapabilities(): { name: string; description: string }[] {
   return out;
 }
 
+/**
+ * The exact preprompt a spawn would produce RIGHT NOW for a given profile —
+ * every input read from current state (the profile definition, the vault, the
+ * permission mode, the pilot prompt, the seeded skills). The ONE builder, so
+ * the snapshot captured at spawn and the one recomputed to detect drift are
+ * byte-identical: a difference always means the agent's context actually
+ * changed, never that two code paths spelled it differently.
+ */
+function buildPreprompt(profileName?: string | null): PrepromptPart[] {
+  const profile = profileName ? getProfile(profileName) : undefined;
+  const resolved = effectiveProfile(profile);
+  return prepromptParts({
+    profileName: profileName ?? null,
+    role: resolved?.systemPrompt,
+    model: resolved?.model,
+    deny: resolved?.deny,
+    allow: resolved?.allow,
+    permissionMode,
+    secretNames: Object.keys(secretsFor(profile?.secrets)),
+    capabilities: installedCapabilities(),
+    pilotPrompt: pilotPrompt() ?? undefined,
+    ledgerReflex: ledgerEnabled ? ledgerReflex() : null,
+  });
+}
+
+/**
+ * The installed `claude` binary version, cached briefly. A real `claude
+ * --version` spawn, so it is kept out of hot paths: captured once at spawn and
+ * refreshed at most once a minute for the staleness sweep. Null when the probe
+ * fails (e.g. the launcher is mid-rewrite, invariant 32) — treated as "unknown",
+ * never as a change, so a transient failure never raises a false reload hint.
+ */
+let claudeVerCache: { at: number; v: string | null } | null = null;
+function currentClaudeVersion(): string | null {
+  const now = Date.now();
+  if (claudeVerCache && now - claudeVerCache.at < 60_000) return claudeVerCache.v;
+  let v: string | null = null;
+  try {
+    v = parseClaudeVersion(execFileSync(claudeCommand(), ["--version"], { encoding: "utf8", timeout: 5000 }));
+  } catch {
+    v = null;
+  }
+  claudeVerCache = { at: now, v };
+  return v;
+}
+
 function makePilot(
   id: string,
   cwd: string,
@@ -3407,7 +3637,10 @@ function makePilot(
   // only these belong in the note. Announcing SHADOK_SESSION_ID as a "secret you
   // must never print" was noise that buried the real ones.
   const secretEnv = secretsFor(profile?.secrets);
-  const env: Record<string, string> = { ...secretEnv };
+  // A custom model backend (a self-hosted open model, a gateway) first, then
+  // the secrets: `backendEnv` carries shadok's own ANTHROPIC_* only when they
+  // point off Anthropic, and maps the model aliases. See src/backend.ts.
+  const env: Record<string, string> = { ...backendEnv(instanceBackendSource(), secretEnv), ...secretEnv };
   // Self-scheduling context: lets the shadok-scheduler skill register/list/remove
   // crons on THIS channel via the local API (so the user can set up monitoring in
   // plain language just by asking the agent).
@@ -3440,23 +3673,10 @@ function makePilot(
     ...(sp ? ["--append-system-prompt", sp] : []),
     ...(lr ? ["--append-system-prompt", lr] : []),
   ];
-  const resolved = effectiveProfile(profile);
-  prepromptById.set(
-    id,
-    prepromptParts({
-      profileName: profileName ?? null,
-      role: resolved?.systemPrompt,
-      model: resolved?.model,
-      deny: resolved?.deny,
-      allow: resolved?.allow,
-      permissionMode,
-      // NAMES only: the values are in `env`, and never travel to a client.
-      secretNames: Object.keys(secretEnv),
-      capabilities: installedCapabilities(),
-      pilotPrompt: sp ?? undefined,
-      ledgerReflex: lr,
-    }),
-  );
+  // NAMES only: the values are in `env`, and never travel to a client. Built
+  // through the shared `buildPreprompt`, so this spawn snapshot is comparable
+  // byte-for-byte with the one the staleness check recomputes later.
+  prepromptById.set(id, buildPreprompt(profileName));
   // Spawn the binary `claudeCommand` resolved, not the bare name `claude`. They
   // differ exactly when the npm launcher is the fallback placeholder: spawning
   // by name would then run the 500-byte stub, which exits 1 on stderr and looks
@@ -3506,6 +3726,10 @@ interface Live {
   monitors: number;
   /** The window this session's model setting asks for (see `windowForModel`). */
   contextWindow: number;
+  /** Subscription or a custom backend, decided AT SPAWN from the same env the
+   *  process got. A custom agent spends no subscription quota, so the pace
+   *  guard must never hold it back. See src/backend.ts. */
+  backend: Backend["kind"];
   /** The last assistant block of this turn was the silence placeholder. */
   lastTurnSilent: boolean;
   /** A hidden prompt (a `cron` fire or a parent notification) was just
@@ -3584,6 +3808,9 @@ interface Live {
   /** How long the last finished turn took, so a client attaching between
    *  turns can restore the frozen time instead of showing a blank timer. */
   lastTurnMs: number | null;
+  /** Last staleness reasons broadcast for this session (serialised), so the
+   *  periodic sweep only re-broadcasts when they actually change. */
+  lastStaleSig?: string;
   /** Experimental raw terminal: pilot detach fn + the clients streaming it.
    *  The pipe stays open while ≥1 client is attached, closed when the last
    *  leaves. */
@@ -3686,6 +3913,10 @@ async function restartSession(s: Live): Promise<void> {
   s.appliedProfile = s.profile;   // the new process carries the desired profile
   await attachPilot(s);
   s.restarting = false;
+  // A restart spawns a brand-new process, so its anchor is current: re-record
+  // it (clearing `legacy`), which is what makes the reload indicator go dark.
+  recordSpawnFingerprint(s);
+  s.lastStaleSig = undefined;
   // `lastTurnMs`, like the connect-path `ready`: the transient "working" above
   // started the client's turn timer, and this "ready" is what stops it — without
   // the last turn's duration to freeze onto, the counter kept ticking after the
@@ -3697,6 +3928,7 @@ async function restartSession(s: Live): Promise<void> {
     instanceKey: instanceKey(),
     sessionId: s.id,
     preprompt: prepromptById.get(s.id) ?? [],
+    stale: sessionStaleness(s),
     cwd: s.cwd,
     branch: s.worktree?.branch ?? null,
     lastTurnMs: s.lastTurnMs,
@@ -3734,7 +3966,68 @@ function broadcastProfile(s: Live) {
   broadcast(s, profileMessage(s));
 }
 
+// ── Reload indicator: is a running agent behind what a fresh spawn gives? ────
+//
+// The signal is version-INDEPENDENT (see `stalenessReasons`): it compares what
+// the RUNNING process actually received against what shadok injects now. The
+// anchor is DURABLE (the channel on disk, `spawnFp`/`spawnAt`/`spawnClaudeVer`)
+// because the in-memory `prepromptById` snapshot is reset to "current" whenever
+// a surviving tmux pane is re-adopted after a server restart — which is exactly
+// the moment a shadok auto-update changes the prompt under a live agent, so an
+// in-memory anchor would hide the very drift this detects.
+
+/** Record this agent's spawn fingerprint — but ONLY for a process we actually
+ *  spawned. An adopted pane is the OLD process: its stored fingerprint must be
+ *  left alone (or seeded as `legacy` the first time, so a pre-feature agent
+ *  reads as stale until reloaded). Called once after `attachPilot`. */
+function recordSpawnFingerprint(s: Live): void {
+  const adopted = s.pilot instanceof TmuxPilot && s.pilot.attached;
+  if (adopted) {
+    const stored = loadChannels().find((c) => c.sessionId === s.id);
+    if (stored && stored.spawnFp !== undefined) return; // old process, keep its anchor
+    upsertChannel({ sessionId: s.id, spawnFp: LEGACY_FINGERPRINT, spawnAt: 0, spawnClaudeVer: null });
+    return;
+  }
+  upsertChannel({
+    sessionId: s.id,
+    spawnFp: prepromptFingerprint(prepromptById.get(s.id) ?? []),
+    spawnAt: Date.now(),
+    spawnClaudeVer: currentClaudeVersion(),
+  });
+}
+
+/** Why this agent should be reloaded, empty when up to date. Reads the durable
+ *  anchor off the channel (optionally pre-loaded by the sweep to avoid N reads). */
+function sessionStaleness(s: Live, channels?: Channel[]): StaleReason[] {
+  const ch = (channels ?? loadChannels()).find((c) => c.sessionId === s.id);
+  if (!ch || ch.spawnFp === undefined) return []; // no anchor yet (brand-new, pre-first-record)
+  return stalenessReasons({
+    spawnFp: ch.spawnFp,
+    currentFp: prepromptFingerprint(buildPreprompt(s.profile)),
+    hasPassword: !!GUI_PASSWORD,
+    spawnedAt: ch.spawnAt ?? null,
+    now: Date.now(),
+    authTtlMs: SESSION_TTL_MS,
+    spawnClaudeVersion: ch.spawnClaudeVer ?? null,
+    currentClaudeVersion: currentClaudeVersion(),
+  });
+}
+
+function staleMessage(s: Live, channels?: Channel[]) {
+  return { type: "stale" as const, sessionId: s.id, reasons: sessionStaleness(s, channels) };
+}
+
+/** Broadcast the staleness reasons, but only when they changed. */
+function broadcastStaleness(s: Live, channels?: Channel[]): void {
+  const msg = staleMessage(s, channels);
+  const sig = JSON.stringify(msg.reasons);
+  if (sig === s.lastStaleSig) return;
+  s.lastStaleSig = sig;
+  broadcast(s, msg);
+}
+
 function destroySession(s: Live) {
+  prepromptById.delete(s.id);
   prepromptById.delete(s.id);
   if (s.screenTimer) clearInterval(s.screenTimer);
   s.screenTimer = null;
@@ -3875,7 +4168,13 @@ async function createSession(
   const pilot = makePilot(id, cwd, args, profile, model, effort);
   // Resumed sessions start with what the transcript already consumed.
   const seededUsage = scanUsage(sessionFilePath(cwd, id));
-  const contextWindow = windowForModel(sessionModelSetting(profile, model));
+  const backend = sessionBackend(profile);
+  // A custom backend's window is whatever its server was started with, which
+  // no model name can tell us: SHADOK_CONTEXT_WINDOW says it, and without it
+  // the usual assumption stands (and `effectiveWindow` still promotes on proof).
+  const contextWindow =
+    (backend.kind === "custom" ? backend.contextWindow : null) ??
+    windowForModel(sessionModelSetting(profile, model));
   const s: Live = {
     id,
     cwd,
@@ -3890,6 +4189,7 @@ async function createSession(
     lastScreen: "",
     lastDialogKey: null,
     contextWindow,
+    backend: backend.kind,
     // A reattached session must show its bar at once, not only after the next
     // turn writes a usage record — so seed from the transcript's last message.
     model,
@@ -3910,6 +4210,10 @@ async function createSession(
     lastTurnMs: null,
   };
   await attachPilot(s);
+  // Anchor what this process actually got, so the reload indicator can later
+  // tell whether it drifted. No-op-safe for an adopted pane (keeps the old
+  // anchor); seeds `legacy` the first time a pre-feature agent is adopted.
+  recordSpawnFingerprint(s);
   return s;
 }
 
@@ -4481,7 +4785,11 @@ function maybeScheduleRetry(s: Live) {
     // A failed usage read must never block: paceBlock(null, …) reports
     // "not blocked", so a rejection degrades to letting the retry through
     // rather than wedging the chain on an unhandled rejection.
-    const verdict = paceBlock(await getUsage().catch(() => null), Date.now());
+    // A custom backend spends no subscription quota, so it is never parked.
+    const verdict =
+      s.backend === "custom"
+        ? paceBlock(null, Date.now())
+        : paceBlock(await getUsage().catch(() => null), Date.now());
     // A takeover (or teardown) replaced or cleared our timer while we were
     // fetching: this chain is no longer the live one, so stand down — and
     // leave s.retryTimer alone, it now belongs to whoever replaced us.
@@ -4608,18 +4916,26 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
           // "unknown", and the spawn itself would throw "posix_spawnp failed".
           const claude = await ensureClaudeOnce();
           if (!claude.ok) return fail(claude.error);
-          const auth = await authStatus();
-          if (auth.state === "unknown")
-            console.log(`auth: could not verify sign-in state, allowing the spawn anyway`);
-          if (auth.state === "signed-out") {
-            // Telling the user is the whole point: a cron refused at 4am must
-            // not be discovered a day later. Deduplicated inside, so a
-            // five-minute cron does not turn one sign-out into a flood.
-            announceLoggedOut();
-            return fail(
-              "this shadok-ai instance is not signed in to Claude — sign in from the cockpit",
-              "logged-out",
-            );
+          // An agent on a custom backend authenticates with its own token and
+          // never touches the subscription, so the instance's sign-in is not
+          // its business. The profile is resolved early (and cheaply) for this
+          // alone; a resume we cannot match falls back to the probe as before.
+          if (sessionBackend(gateProfile(msg)).kind === "custom") {
+            console.log(`auth: custom model backend, sign-in not required`);
+          } else {
+            const auth = await authStatus();
+            if (auth.state === "unknown")
+              console.log(`auth: could not verify sign-in state, allowing the spawn anyway`);
+            if (auth.state === "signed-out") {
+              // Telling the user is the whole point: a cron refused at 4am must
+              // not be discovered a day later. Deduplicated inside, so a
+              // five-minute cron does not turn one sign-out into a flood.
+              announceLoggedOut();
+              return fail(
+                "this shadok-ai instance is not signed in to Claude — sign in from the cockpit",
+                "logged-out",
+              );
+            }
           }
           if (typeof msg.origin === "string") origin = msg.origin.slice(0, 16);
           const cwd = msg.cwd?.trim() || process.cwd();
@@ -4736,6 +5052,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
               instanceKey: instanceKey(),
               sessionId: id,
               preprompt: prepromptById.get(id) ?? [],
+              stale: sessionStaleness(session),
               cwd: session.cwd,
               lastTurnMs: session.lastTurnMs,
             });
@@ -4830,6 +5147,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
             instanceKey: instanceKey(),
             sessionId: id,
             preprompt: prepromptById.get(id) ?? [],
+            stale: sessionStaleness(session),
             cwd: effectiveCwd,
             branch: worktree?.branch ?? null,
           });
@@ -4910,7 +5228,8 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
           // Above the ideal pace, a prompt needs an explicit second click. The
           // check lives here because this is the single door every user prompt
           // goes through — including the pilotctl thin client.
-          if (!msg.force) {
+          // A custom backend spends no subscription quota: nothing to pace.
+          if (!msg.force && session.backend !== "custom") {
             const verdict = paceBlock(await getUsage(), Date.now());
             if (verdict.blocked) return send({ type: "pace-blocked", reason: verdict.reason, text });
             // The busy test above is now stale: a parked fire() (or another
@@ -5598,6 +5917,15 @@ server.listen(port, HOST, () => {
   primeCrons();
   const cronTimer = setInterval(cronTick, 30_000);
   cronTimer.unref();
+  // Reload indicator: re-evaluate every live agent's staleness once a minute and
+  // push it when it changed — this is how a profile edit, a newly-seeded skill or
+  // a freshly-installed `claude` reaches an idle agent's tab without any traffic
+  // on it. One `claude --version` per sweep at most (the version is cached).
+  const staleTimer = setInterval(() => {
+    const channels = loadChannels();
+    for (const s of sessions.values()) if (!s.pilot.hasExited) broadcastStaleness(s, channels);
+  }, 60_000);
+  staleTimer.unref();
   // The lead agent, if this instance has none. Deferred a beat so it dials a
   // server that is already accepting, and never awaited: a cockpit that starts
   // without its lead agent is a far smaller problem than a boot that hangs.
