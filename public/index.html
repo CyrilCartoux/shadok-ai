@@ -1168,8 +1168,12 @@
     word-break: break-word;
     overflow-x: auto;
   }
-  /* History replayed from the .jsonl: raw markdown → HTML rendering. */
-  .turn.hist { opacity: 0.8; }
+  /* History replayed from the .jsonl renders IDENTICALLY to a just-arrived live
+     block — same markdown pipeline, same full opacity. It used to be dimmed
+     (opacity: 0.8), which meant a reload — typically an auto-update while you
+     were reading — suddenly greyed the whole conversation you were reading, so
+     old and new messages no longer matched. Replayed content is not "lesser"
+     content: it is the same transcript, so it looks the same. */
   /* Live preview of the in-flight block, extracted from the TUI screen (raw,
      not markdown). Greyed + pre-formatted to signal it is provisional; replaced
      by the .jsonl block (stream-text) as soon as that arrives. */
