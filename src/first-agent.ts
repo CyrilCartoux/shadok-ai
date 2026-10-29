@@ -36,8 +36,13 @@ export interface FirstAgentPlan {
 export function firstAgentPlan(input: {
   channelCount: number;
   authState: AuthState;
+  /** The whole instance runs on a custom model backend (src/backend.ts): its
+   *  agents carry their own token, so the Claude sign-in is irrelevant. */
+  customBackend?: boolean;
 }): FirstAgentPlan {
   if (input.channelCount > 0) return { spawn: false, reason: "channels-exist" };
+  if (input.customBackend)
+    return { spawn: true, reason: "first-boot", name: FIRST_AGENT_NAME, profile: BOSS_PROFILE_NAME };
   // "unknown" is not "signed in": the probe failed. Waiting costs one boot,
   // guessing costs an agent with no credentials — the zombie shape (invariant 27).
   if (input.authState !== "signed-in") return { spawn: false, reason: "not-signed-in" };
@@ -113,13 +118,21 @@ export async function ensureFirstAgent(deps: {
   port: number;
   cookie?: string;
   cwd: string;
+  /** The instance runs on a custom model backend (src/backend.ts) — decided by
+   *  the server, which owns both the env and the saved choice. */
+  customBackend?: boolean;
   /** Called with the new session id once the server reports it ready. */
   onReady: (sessionId: string, name: string) => void;
 }): Promise<FirstAgentPlan["reason"]> {
   if (inFlight) return "channels-exist";
+  // Instance-wide only: the lead agent's profile is not consulted, so a custom
+  // backend reaches it through the instance's source (env or saved choice).
+  const customBackend = deps.customBackend ?? false;
   const plan = firstAgentPlan({
     channelCount: loadChannels().length,
-    authState: (await authStatus()).state,
+    // No probe when it cannot change the answer (~850ms, and a process spawn).
+    authState: customBackend ? "unknown" : (await authStatus()).state,
+    customBackend,
   });
   if (!plan.spawn) {
     settleFirstAgent(plan.reason);
