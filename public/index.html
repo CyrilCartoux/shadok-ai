@@ -2139,27 +2139,18 @@
   .sec-reload button:hover { background: color-mix(in srgb, var(--amber) 15%, transparent); }
 
   /* ══ Teams layer ═════════════════════════════════════════════════════════
-     The cockpit's shape follows Microsoft Teams: a title bar with search, an app
-     bar on the left, every group as a collapsible section of the agents pane,
-     round avatars with a presence dot, a channel header with tabs, bubbles, and
-     dialogs as approval cards. Colours stay tokens, so light mode reads as Teams
-     and dark mode as the neutral near-black. Placed LAST so it wins on equal
-     specificity; the phone layout (≤640px) keeps its sheet and its ⋯ menu. */
+     A Teams-style SKIN over the cockpit's original layout: round avatars with a
+     presence dot, a channel header, bubbles, and dialogs as approval cards.
+     Colours stay tokens, so light mode reads as Teams and dark mode as the
+     neutral near-black. The layout itself is unchanged — the global tools live
+     in the header, and the groups keep their own left column (#groupRail). Placed
+     LAST so it wins on equal specificity; the phone layout (≤640px) keeps its
+     sheet and its ⋯ menu. */
   :root { --mine: color-mix(in srgb, var(--amber) 20%, var(--bg-raised)); --pane-main: color-mix(in srgb, var(--bg) 55%, var(--bg-raised)); }
   :root[data-mode="light"] { --mine: color-mix(in srgb, var(--amber) 13%, #fff); }
 
   /* Title bar */
   header { padding: 8px 14px; gap: 14px; }
-  #agentSearch {
-    flex: 0 1 520px; margin: 0 auto; display: flex; align-items: center; gap: 8px;
-    height: 32px; padding: 0 12px; border-radius: 6px; cursor: text;
-    background: var(--bg-raised); color: var(--text-dim); border: 1px solid var(--line);
-  }
-  #agentSearch:focus-within { border-color: var(--amber); }
-  #agentSearch input { flex: 1; min-width: 0; border: 0; outline: none; background: none; color: var(--text); font: inherit; font-size: 13.5px; padding: 0; }
-  #agentSearch input::placeholder { color: var(--text-dim); }
-  #agentSearch + .spacer { display: none; }
-  @media (max-width: 640px) { #agentSearch { display: none; } #agentSearch + .spacer { display: block; } }
   @media (min-width: 641px) { header { flex-wrap: nowrap; } }
   /* The star pill is the widest tool; under 1100px it lives in the ⋯ menu. */
   @media (min-width: 641px) and (max-width: 1100px) { #starBtn { display: none; } #moreMenu #starMenuItem { display: block; } }
@@ -2183,7 +2174,6 @@
   }
   .tav .led { position: absolute; right: -2px; bottom: -2px; width: 12px; height: 12px; margin: 0; border: 2px solid var(--bg); }
   .ab-txt, .ct-txt { display: none; }
-  #appBar { display: none; }
   @media (max-width: 640px) {
     /* A phone's single header row has no room for the mark beside the name,
        the version and the dials; the favicon carries it there. */
@@ -2203,8 +2193,6 @@
   :root:not([data-mode="light"]) .tab.active { background: var(--bg-inset); box-shadow: inset 0 0 0 1px var(--line); }
   .tab.active .tav .led { border-color: var(--bg-raised); }
   .tab.unread { border-left: 0; border-radius: 6px; font-weight: 700; }
-  .tab.filtered-out { display: none !important; }
-  body.filtering .group.collapsed .group-body { display: flex !important; }
   .group-head { gap: 10px; padding: 8px; font-size: 14px; color: var(--text); border-radius: 6px; }
   .group-head .gicon {
     flex: none; width: 30px; height: 30px; border-radius: 6px; display: grid; place-items: center;
@@ -2215,62 +2203,25 @@
 
   @media (min-width: 641px) {
     main { padding: 0; gap: 0; }
-    /* App bar */
-    #appBar { width: 68px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0 12px; background: var(--page); overflow-y: auto; }
-    #appTools { display: contents; }
-    #appBar button {
-      position: relative; width: 62px; padding: 8px 0 6px; display: flex; flex-direction: column; align-items: center; gap: 3px;
-      border: 0; border-radius: 6px; background: none; color: var(--text-dim); font-size: 10.5px; line-height: 1.1;
-    }
-    #appBar button:hover { color: var(--amber); background: none; }
-    #appBar button.on { color: var(--amber); font-weight: 600; }
-    #appBar button.on::before { content: ""; position: absolute; left: -2px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--amber); }
-    #appBar button[hidden] { display: none; }
-    #appBar svg { width: 20px !important; height: 20px !important; vertical-align: 0 !important; }
-    #appBar .ab-txt { display: block; }
-    #appBar .ab-n, #appBar .sec-badge {
-      position: absolute; top: 3px; right: 12px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
-      background: var(--err); color: #fff; font-size: 10px; font-weight: 600; line-height: 16px; text-align: center;
-    }
-    #appBar .ab-n[hidden] { display: none; }
-
-    /* Every group is a section of the agents pane; the rail goes. */
-    body.has-groups #groupRail { display: none; }
-    #tabbar, body.has-groups #tabbar {
-      width: 300px; border: 0; border-radius: 8px 0 0 0; background: var(--bg); padding: 12px 8px;
-    }
-    #tabbar .side-label { font-size: 18px; font-weight: 700; padding: 4px 8px 12px; }
-    body.has-groups #tabbar .side-label .sl-all { display: inline; }
-    #tabbar .side-label .sl-view, #viewEmpty { display: none !important; }
-    #tabbar .group-head { display: flex; }
-    #tabbar .group { margin-top: 6px; }
-    #tabbar .group-body { padding-left: 20px; }
-    #tabbar .group.collapsed .group-body { display: none; }
-    #tabbar:not([data-view="ungrouped"]) #ungrouped,
-    #tabbar[data-view="ungrouped"] #groups { display: flex; flex-direction: column; }
-    #tabbar .group:not(.in-view) { display: flex; }
-    #newGroupBare, body.has-groups #newGroupBare { display: block; }
-
     /* Conversation */
     .chat-pane { border: 0; border-radius: 0; background: var(--pane-main); }
     #machine, #diffpanel { border-radius: 0; border-top: 0; border-bottom: 0; border-right: 0; }
   }
 
-  /* Channel header: avatar, name, status, then tabs. */
+  /* Channel header: avatar, name, status, then actions. */
   #chanBar { gap: 12px; padding: 0 20px; min-height: 58px; background: var(--bg-raised); border-bottom: 1px solid var(--line); }
   #chanBar .tav { width: 36px; height: 36px; font-size: 13px; }
   #chanBar #chanBarName { font-size: 16px; font-weight: 700; }
   #chanBar .gauge .label { display: none; }
   #chanBar .gauge .value { color: var(--text-dim); font-size: 12px; }
   #chanBar .gauge:nth-of-type(3) { display: none; } /* the session id: in the tooltip of the menu */
-  .chan-tabs { display: flex; align-self: stretch; gap: 2px; margin-left: 10px; }
-  .chan-tabs button, #chanBar .chan-actions #chanCron, #chanBar .chan-actions #chanTerm {
+  #chanBar .chan-actions #chanCron, #chanBar .chan-actions #chanTerm {
     position: relative; align-self: stretch; display: inline-flex; align-items: center; gap: 6px;
     border: 0; border-radius: 0; background: none; padding: 0 10px; color: var(--text-dim); font-size: 14px;
   }
-  .chan-tabs button:hover, #chanBar .chan-actions #chanCron:hover, #chanBar .chan-actions #chanTerm:hover { color: var(--text); background: none; }
-  .chan-tabs button.on, #chanBar .chan-actions #chanTerm.on { color: var(--text); font-weight: 600; background: none; border: 0; }
-  .chan-tabs button.on::after, #chanBar .chan-actions #chanTerm.on::after {
+  #chanBar .chan-actions #chanCron:hover, #chanBar .chan-actions #chanTerm:hover { color: var(--text); background: none; }
+  #chanBar .chan-actions #chanTerm.on { color: var(--text); font-weight: 600; background: none; border: 0; }
+  #chanBar .chan-actions #chanTerm.on::after {
     content: ""; position: absolute; left: 10px; right: 10px; bottom: 0; height: 3px; border-radius: 3px 3px 0 0; background: var(--amber);
   }
   #chanBar .chan-actions { align-self: stretch; }
@@ -2278,7 +2229,7 @@
   #chanBar .chan-actions #chanStop, #chanBar .chan-actions #chanMenu { align-self: center; }
   @media (max-width: 640px) {
     #chanBar { min-height: 0; padding: 8px 12px; }
-    #chanBar .tav, .chan-tabs, #chanBar .chan-actions .ct-txt { display: none; }
+    #chanBar .tav, #chanBar .chan-actions .ct-txt { display: none; }
   }
 
   /* Messages: Teams bubbles. */
@@ -2308,8 +2259,6 @@
 
 <header>
   <span class="brand"><span class="brand-logo" aria-hidden="true"><svg viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="17" cy="17" rx="10" ry="8.5"/><path d="M25 12.5c3-3 7.5-3 10-1.2-2.8.4-5 1.9-6.6 4"/><path d="M14 25.3l-2.4 10M20 25.3l1.6 10"/></g></svg></span><span class="brand-name" id="brandName" title="Rename this cockpit">shadok-ai</span><span class="brand-edit" id="brandEdit" title="Rename this cockpit" aria-hidden="true">✎</span> <span class="ver" id="verView" title="Running version"></span><span class="ver-chan" id="verChan" aria-hidden="true"></span></span>
-  <!-- Teams-style search: filters the agents list as you type (desktop). -->
-  <label id="agentSearch"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><input id="agentFilter" type="search" placeholder="Search agents" autocomplete="off" spellcheck="false" aria-label="Search agents"></label>
   <span class="spacer"></span>
   <div class="gauge quota" id="quota5h" data-window="5h" title="5h rolling limit">
     <svg class="dial" viewBox="0 0 56 44" role="img" aria-label="5h rolling limit">
@@ -2873,14 +2822,6 @@
 </div>
 
 <main>
-  <!-- The app bar (desktop): Teams' left column. Activity jumps to an agent that
-       waits for you; the global tools are MOVED here by reflowHeaderTools (the
-       real buttons, handlers included) and back to the header/⋯ on a phone. -->
-  <nav id="appBar" aria-label="Apps">
-    <button id="abActivity" type="button" title="Jump to an agent waiting for you"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0"/></svg><span class="ab-txt">Activity</span><span id="abActivityN" class="ab-n" hidden></span></button>
-    <button id="abAgents" type="button" class="on" title="Agents"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="9" cy="9" r="3.2"/><circle cx="17" cy="10" r="2.4"/><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6M14.5 15c2.6-.6 5 .6 5.8 3.4"/></g></svg><span class="ab-txt">Agents</span></button>
-    <div id="appTools"></div>
-  </nav>
   <!-- The groups column (desktop only): a VIEW over the agents column beside it,
        which still holds the groups, their order and their members — that is what
        is persisted. Picking a group narrows the agents column to it. On a phone
@@ -2950,10 +2891,6 @@
         <span class="label">Branch</span>
         <span class="value" id="branchView">—</span>
       </div>
-      <span class="chan-tabs" role="tablist">
-        <button id="chanChat" type="button" role="tab">Chat</button>
-        <button id="chanDiff" type="button" role="tab">Changes</button>
-      </span>
       <span class="chan-actions">
         <button id="chanUpdate" class="icon" title="Claude Code updated — reload this agent to apply it" aria-label="Reload to apply update" hidden>↻ update</button>
         <button id="chanCron" class="icon" title="Scheduled prompts for this agent (monitoring / reporting)" aria-label="Schedule"><svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-2px" aria-hidden="true"><circle cx="12" cy="13" r="6.3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 9.8V13l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.8 6.6 7.2 4.6M19.2 6.6 16.8 4.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="ct-txt">Schedule</span></button>
@@ -8493,21 +8430,17 @@
   // the real button elements, so their click handlers travel with them.
   // Recomputed on load, on resize, and when the instance name changes.
   const OVERFLOW_TOOLS = ["secretsBtn", "ledgerBtn", "profilesBtn", "telegramBtn", "muteNotif"];
-  // Every tool the desktop app bar carries, in its order.
-  const APP_TOOLS = ["profilesBtn", "ledgerBtn", "secretsBtn", "usersBtn", "securityBtn", "telegramBtn", "muteNotif"];
   function reflowHeaderTools() {
     const hdrTools = document.querySelector(".hdr-tools");
     const moreWrap = document.querySelector(".more-wrap");
     const overflow = $("overflowTools");
     if (!hdrTools || !moreWrap || !overflow) return;
     const mobile = matchMedia("(max-width: 640px)").matches;
-    const appTools = $("appTools");
-    for (const id of APP_TOOLS) {
+    for (const id of OVERFLOW_TOOLS) {
       const el = $(id);
       if (!el) continue;
-      if (!mobile && appTools) appTools.appendChild(el);              // desktop: the app bar
-      else if (mobile && OVERFLOW_TOOLS.includes(id)) overflow.appendChild(el); // phone: the ⋯ menu
-      else hdrTools.insertBefore(el, moreWrap);                       // phone: stays in the header
+      if (mobile) overflow.appendChild(el);          // all into the ⋯ menu
+      else hdrTools.insertBefore(el, moreWrap);       // back in the header, in order
     }
   }
   let reflowPending = false;
@@ -8519,57 +8452,6 @@
   window.addEventListener("resize", scheduleReflow);
   document.addEventListener("DOMContentLoaded", reflowHeaderTools);
   reflowHeaderTools();
-
-  // ── Teams layer: app bar, search, channel tabs ─────────────────────────────
-  // Activity: how many agents wait for an answer; a click opens the next one.
-  function paintActivity() {
-    const n = tabs.filter((t) => t.btnEl.classList.contains("needs-answer")).length;
-    const badge = $("abActivityN");
-    badge.hidden = !n;
-    badge.textContent = n || "";
-  }
-  new MutationObserver(paintActivity).observe($("tabbar"), { subtree: true, attributes: true, attributeFilter: ["class"], childList: true });
-  $("abActivity").addEventListener("click", () => {
-    const waiting = tabs.filter((t) => t.btnEl.classList.contains("needs-answer"));
-    if (!waiting.length) return;
-    activate(waiting[(waiting.indexOf(active) + 1) % waiting.length]);
-  });
-  $("abAgents").addEventListener("click", () => $("agentFilter").focus());
-
-  // Search: narrows the agents list to the names that match; groups unfold
-  // while a query is typed so nothing matching hides in a collapsed one.
-  function applyAgentFilter() {
-    const q = $("agentFilter").value.trim().toLowerCase();
-    document.body.classList.toggle("filtering", !!q);
-    for (const t of tabs) {
-      const hit = !q || (t.nameEl ? t.nameEl.textContent : "").toLowerCase().includes(q);
-      t.btnEl.classList.toggle("filtered-out", !hit);
-    }
-  }
-  $("agentFilter").addEventListener("input", applyAgentFilter);
-  $("agentFilter").addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { e.target.value = ""; applyAgentFilter(); e.target.blur(); }
-    if (e.key === "Enter") {
-      const first = tabs.find((t) => !t.btnEl.classList.contains("filtered-out"));
-      if (first) { activate(first); e.target.value = ""; applyAgentFilter(); }
-    }
-  });
-
-  // Channel tabs: Chat leaves the terminal and the diff; Changes toggles the diff.
-  $("chanChat").addEventListener("click", () => {
-    if (chatPane.classList.contains("terminal-mode")) $("chanTerm").click();
-    if ($("diffpanel").classList.contains("open")) $("toggleDiff").click();
-  });
-  $("chanDiff").addEventListener("click", () => $("toggleDiff").click());
-  const paintChanTabs = () => {
-    const term = chatPane.classList.contains("terminal-mode");
-    const diff = $("diffpanel").classList.contains("open");
-    $("chanChat").classList.toggle("on", !term && !diff);
-    $("chanDiff").classList.toggle("on", diff);
-  };
-  new MutationObserver(paintChanTabs).observe(chatPane, { attributes: true, attributeFilter: ["class"] });
-  new MutationObserver(paintChanTabs).observe($("diffpanel"), { attributes: true, attributeFilter: ["class"] });
-  paintChanTabs();
 
   // ── Diff panel ──────────────────────────────────────────
   function colorDiff(text) {
