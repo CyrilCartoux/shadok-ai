@@ -214,6 +214,13 @@ Enter to skip; you can add it later from the web UI).
   browser, since shell mode sits outside the agent's guardrails. The command and
   its output stay in the chat, reload included — as does one you typed yourself
   in the terminal view.
+- **Provide the variable an agent asks for** — when an agent names a missing
+  credential in code (`` `HUBSPOT_TOKEN missing from the environment` ``), a
+  **+** sits right after it: one click opens the secret vault with the name
+  filled in and the agent's profile ticked, so you only paste the value (then
+  reload the agent when offered — a value reaches a process at spawn). Only
+  names that look like a credential or a connection setting get one (`…_TOKEN`,
+  `…_KEY`, `…_URL`, `…_ID`…), never `NODE_ENV` nor shadok's own `SHADOK_*`.
 - **Files you hand an agent** — paste or drop a file into the composer, or pick
   one with the 📎 button beside it (an image, a PDF, a CSV…), and it becomes a **chip** above the text box: a
   thumbnail for an image, a named tag for anything else, each with a ✕ to
@@ -909,7 +916,12 @@ mode a neutral near-black.
 Light/dark **mode** is an orthogonal, **per-browser** choice in the same menu
 (default dark; stored in `localStorage`, applied before first paint) and needs no
 endpoint — the accent is the instance's shared identity, the mode is personal),
-`/profiles`, `/secrets`, `/telegram`, `/defaults`, `/first-agent` (GET —
+`/profiles`, `/secrets`, `/secrets/audit` (GET, **admin only** — the secret
+audit log: who created/updated/deleted a secret, which profile it was attached
+to, and which agent **received** it at spawn or in a cron guard, with the person
+or door that caused it; names only, never a value; filters `secret`, `action`,
+`actor`, `agent`, `since`, `limit`. Also in the vault panel → *Audit log*, and
+🕘 on each secret), `/telegram`, `/defaults`, `/first-agent` (GET —
 `{pending, reason}`: whether this instance's lead agent is being started
 right now), `/version`, `/autoupdate`,
 `/update-channel` (POST `{channel}` — `alpha` or `beta`), `/permission-mode`, `/tweak/prepare` (POST — clone/refresh shadok-ai's own source,
