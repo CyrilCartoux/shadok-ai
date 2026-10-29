@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual, createHmac } from "node:crypto";
 import { newRequest, askVerdict, approveVerdict, cancelVerdict, dueRequests, expire, upsertRequest, requestsFor, describeRequest, loadRequests, saveRequests, isOpen, REQUEST_TTL_MS, type AdminRequest, type RequestKind } from "./admin-requests.js";
 import { recordEvent, loadEvents, saveEvents, inboxFor, markSeen, notMeEffect, describeEvent, type SecEvent } from "./security-events.js";
-import { execFile, spawn as spawnChild } from "node:child_process";
+import { execFile, execFileSync, spawn as spawnChild } from "node:child_process";
 import type { IncomingMessage } from "node:http";
 import fs from "node:fs";
 import os from "node:os";
@@ -38,6 +38,7 @@ import { PtyPilot } from "./session.js";
 import { ensureClaudeHome, ensureProjectTrusted,
   getDefaultModel,
   setDefaultModel,
+  parseClaudeVersion,
 } from "./claude-home.js";
 import { authStatus, cancelLogin, startLogin, submitLoginCode } from "./claude-auth.js";
 import { readTokenExpiry } from "./claude-creds.js";
@@ -52,7 +53,10 @@ import { readGroundAt } from "./ground.js";
 import { homeGreetingBrief } from "./greeting.js";
 import { ensureSshIdentity } from "./ssh.js";
 import { openBrowser } from "./open-browser.js";
-import { parseSkillMeta, prepromptParts, type PrepromptPart } from "./preprompt.js";
+import {
+  parseSkillMeta, prepromptParts, prepromptFingerprint, stalenessReasons,
+  LEGACY_FINGERPRINT, type PrepromptPart, type StaleReason,
+} from "./preprompt.js";
 import { ensureSpawnHelperExecutable } from "./node-pty-fix.js";
 import { TmuxPilot, tmuxAvailable, tmuxHasSession, tmuxKillSession, tmuxPaneCwd } from "./tmux.js";
 import { scanUsage, sessionFilePath, tailSession, clearTailPos, seedTailPos, isNothingToShow, type TokenUsage } from "./tail.js";
@@ -3377,6 +3381,52 @@ function installedCapabilities(): { name: string; description: string }[] {
   return out;
 }
 
+/**
+ * The exact preprompt a spawn would produce RIGHT NOW for a given profile —
+ * every input read from current state (the profile definition, the vault, the
+ * permission mode, the pilot prompt, the seeded skills). The ONE builder, so
+ * the snapshot captured at spawn and the one recomputed to detect drift are
+ * byte-identical: a difference always means the agent's context actually
+ * changed, never that two code paths spelled it differently.
+ */
+function buildPreprompt(profileName?: string | null): PrepromptPart[] {
+  const profile = profileName ? getProfile(profileName) : undefined;
+  const resolved = effectiveProfile(profile);
+  return prepromptParts({
+    profileName: profileName ?? null,
+    role: resolved?.systemPrompt,
+    model: resolved?.model,
+    deny: resolved?.deny,
+    allow: resolved?.allow,
+    permissionMode,
+    secretNames: Object.keys(secretsFor(profile?.secrets)),
+    capabilities: installedCapabilities(),
+    pilotPrompt: pilotPrompt() ?? undefined,
+    ledgerReflex: ledgerEnabled ? ledgerReflex() : null,
+  });
+}
+
+/**
+ * The installed `claude` binary version, cached briefly. A real `claude
+ * --version` spawn, so it is kept out of hot paths: captured once at spawn and
+ * refreshed at most once a minute for the staleness sweep. Null when the probe
+ * fails (e.g. the launcher is mid-rewrite, invariant 32) — treated as "unknown",
+ * never as a change, so a transient failure never raises a false reload hint.
+ */
+let claudeVerCache: { at: number; v: string | null } | null = null;
+function currentClaudeVersion(): string | null {
+  const now = Date.now();
+  if (claudeVerCache && now - claudeVerCache.at < 60_000) return claudeVerCache.v;
+  let v: string | null = null;
+  try {
+    v = parseClaudeVersion(execFileSync(claudeCommand(), ["--version"], { encoding: "utf8", timeout: 5000 }));
+  } catch {
+    v = null;
+  }
+  claudeVerCache = { at: now, v };
+  return v;
+}
+
 function makePilot(
   id: string,
   cwd: string,
@@ -3427,23 +3477,10 @@ function makePilot(
     ...(sp ? ["--append-system-prompt", sp] : []),
     ...(lr ? ["--append-system-prompt", lr] : []),
   ];
-  const resolved = effectiveProfile(profile);
-  prepromptById.set(
-    id,
-    prepromptParts({
-      profileName: profileName ?? null,
-      role: resolved?.systemPrompt,
-      model: resolved?.model,
-      deny: resolved?.deny,
-      allow: resolved?.allow,
-      permissionMode,
-      // NAMES only: the values are in `env`, and never travel to a client.
-      secretNames: Object.keys(secretEnv),
-      capabilities: installedCapabilities(),
-      pilotPrompt: sp ?? undefined,
-      ledgerReflex: lr,
-    }),
-  );
+  // NAMES only: the values are in `env`, and never travel to a client. Built
+  // through the shared `buildPreprompt`, so this spawn snapshot is comparable
+  // byte-for-byte with the one the staleness check recomputes later.
+  prepromptById.set(id, buildPreprompt(profileName));
   // Spawn the binary `claudeCommand` resolved, not the bare name `claude`. They
   // differ exactly when the npm launcher is the fallback placeholder: spawning
   // by name would then run the 500-byte stub, which exits 1 on stderr and looks
@@ -3571,6 +3608,9 @@ interface Live {
   /** How long the last finished turn took, so a client attaching between
    *  turns can restore the frozen time instead of showing a blank timer. */
   lastTurnMs: number | null;
+  /** Last staleness reasons broadcast for this session (serialised), so the
+   *  periodic sweep only re-broadcasts when they actually change. */
+  lastStaleSig?: string;
   /** Experimental raw terminal: pilot detach fn + the clients streaming it.
    *  The pipe stays open while ≥1 client is attached, closed when the last
    *  leaves. */
@@ -3673,6 +3713,10 @@ async function restartSession(s: Live): Promise<void> {
   s.appliedProfile = s.profile;   // the new process carries the desired profile
   await attachPilot(s);
   s.restarting = false;
+  // A restart spawns a brand-new process, so its anchor is current: re-record
+  // it (clearing `legacy`), which is what makes the reload indicator go dark.
+  recordSpawnFingerprint(s);
+  s.lastStaleSig = undefined;
   // `lastTurnMs`, like the connect-path `ready`: the transient "working" above
   // started the client's turn timer, and this "ready" is what stops it — without
   // the last turn's duration to freeze onto, the counter kept ticking after the
@@ -3684,6 +3728,7 @@ async function restartSession(s: Live): Promise<void> {
     instanceKey: instanceKey(),
     sessionId: s.id,
     preprompt: prepromptById.get(s.id) ?? [],
+    stale: sessionStaleness(s),
     cwd: s.cwd,
     branch: s.worktree?.branch ?? null,
     lastTurnMs: s.lastTurnMs,
@@ -3721,7 +3766,68 @@ function broadcastProfile(s: Live) {
   broadcast(s, profileMessage(s));
 }
 
+// ── Reload indicator: is a running agent behind what a fresh spawn gives? ────
+//
+// The signal is version-INDEPENDENT (see `stalenessReasons`): it compares what
+// the RUNNING process actually received against what shadok injects now. The
+// anchor is DURABLE (the channel on disk, `spawnFp`/`spawnAt`/`spawnClaudeVer`)
+// because the in-memory `prepromptById` snapshot is reset to "current" whenever
+// a surviving tmux pane is re-adopted after a server restart — which is exactly
+// the moment a shadok auto-update changes the prompt under a live agent, so an
+// in-memory anchor would hide the very drift this detects.
+
+/** Record this agent's spawn fingerprint — but ONLY for a process we actually
+ *  spawned. An adopted pane is the OLD process: its stored fingerprint must be
+ *  left alone (or seeded as `legacy` the first time, so a pre-feature agent
+ *  reads as stale until reloaded). Called once after `attachPilot`. */
+function recordSpawnFingerprint(s: Live): void {
+  const adopted = s.pilot instanceof TmuxPilot && s.pilot.attached;
+  if (adopted) {
+    const stored = loadChannels().find((c) => c.sessionId === s.id);
+    if (stored && stored.spawnFp !== undefined) return; // old process, keep its anchor
+    upsertChannel({ sessionId: s.id, spawnFp: LEGACY_FINGERPRINT, spawnAt: 0, spawnClaudeVer: null });
+    return;
+  }
+  upsertChannel({
+    sessionId: s.id,
+    spawnFp: prepromptFingerprint(prepromptById.get(s.id) ?? []),
+    spawnAt: Date.now(),
+    spawnClaudeVer: currentClaudeVersion(),
+  });
+}
+
+/** Why this agent should be reloaded, empty when up to date. Reads the durable
+ *  anchor off the channel (optionally pre-loaded by the sweep to avoid N reads). */
+function sessionStaleness(s: Live, channels?: Channel[]): StaleReason[] {
+  const ch = (channels ?? loadChannels()).find((c) => c.sessionId === s.id);
+  if (!ch || ch.spawnFp === undefined) return []; // no anchor yet (brand-new, pre-first-record)
+  return stalenessReasons({
+    spawnFp: ch.spawnFp,
+    currentFp: prepromptFingerprint(buildPreprompt(s.profile)),
+    hasPassword: !!GUI_PASSWORD,
+    spawnedAt: ch.spawnAt ?? null,
+    now: Date.now(),
+    authTtlMs: SESSION_TTL_MS,
+    spawnClaudeVersion: ch.spawnClaudeVer ?? null,
+    currentClaudeVersion: currentClaudeVersion(),
+  });
+}
+
+function staleMessage(s: Live, channels?: Channel[]) {
+  return { type: "stale" as const, sessionId: s.id, reasons: sessionStaleness(s, channels) };
+}
+
+/** Broadcast the staleness reasons, but only when they changed. */
+function broadcastStaleness(s: Live, channels?: Channel[]): void {
+  const msg = staleMessage(s, channels);
+  const sig = JSON.stringify(msg.reasons);
+  if (sig === s.lastStaleSig) return;
+  s.lastStaleSig = sig;
+  broadcast(s, msg);
+}
+
 function destroySession(s: Live) {
+  prepromptById.delete(s.id);
   prepromptById.delete(s.id);
   if (s.screenTimer) clearInterval(s.screenTimer);
   s.screenTimer = null;
@@ -3897,6 +4003,10 @@ async function createSession(
     lastTurnMs: null,
   };
   await attachPilot(s);
+  // Anchor what this process actually got, so the reload indicator can later
+  // tell whether it drifted. No-op-safe for an adopted pane (keeps the old
+  // anchor); seeds `legacy` the first time a pre-feature agent is adopted.
+  recordSpawnFingerprint(s);
   return s;
 }
 
@@ -4723,6 +4833,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
               instanceKey: instanceKey(),
               sessionId: id,
               preprompt: prepromptById.get(id) ?? [],
+              stale: sessionStaleness(session),
               cwd: session.cwd,
               lastTurnMs: session.lastTurnMs,
             });
@@ -4817,6 +4928,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
             instanceKey: instanceKey(),
             sessionId: id,
             preprompt: prepromptById.get(id) ?? [],
+            stale: sessionStaleness(session),
             cwd: effectiveCwd,
             branch: worktree?.branch ?? null,
           });
@@ -5585,6 +5697,15 @@ server.listen(port, HOST, () => {
   primeCrons();
   const cronTimer = setInterval(cronTick, 30_000);
   cronTimer.unref();
+  // Reload indicator: re-evaluate every live agent's staleness once a minute and
+  // push it when it changed — this is how a profile edit, a newly-seeded skill or
+  // a freshly-installed `claude` reaches an idle agent's tab without any traffic
+  // on it. One `claude --version` per sweep at most (the version is cached).
+  const staleTimer = setInterval(() => {
+    const channels = loadChannels();
+    for (const s of sessions.values()) if (!s.pilot.hasExited) broadcastStaleness(s, channels);
+  }, 60_000);
+  staleTimer.unref();
   // The lead agent, if this instance has none. Deferred a beat so it dials a
   // server that is already accepting, and never awaited: a cockpit that starts
   // without its lead agent is a far smaller problem than a boot that hangs.

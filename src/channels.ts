@@ -60,6 +60,24 @@ export interface Channel {
    *  this instance's admin sees who is driving what. Server-owned; absent for a
    *  locally-spawned agent. See `src/peers.ts`. */
   createdByPeer?: string;
+  /** Fingerprint of what shadok injected into the RUNNING process at its last
+   *  real spawn (a hash of the preprompt: role, guardrails, skills, secret
+   *  names, permission mode, pilot prompt, ledger reflex). Compared to the
+   *  current fingerprint to tell whether a long-lived agent is running a stale
+   *  prompt/guardrails/skill set — the thing a server auto-update changes while
+   *  a tmux agent survives it. `"legacy"` marks an agent adopted with no stored
+   *  fingerprint, i.e. one that predates this field: it reads as stale until
+   *  reloaded. Durable (on disk, survives restart) BECAUSE the in-memory
+   *  snapshot is reset to "current" when a surviving pane is re-adopted, which
+   *  would hide exactly the drift this detects. Server-owned, write-once per
+   *  real spawn (never on adoption of an existing pane). See `stalenessReasons`. */
+  spawnFp?: string;
+  /** When that real spawn happened (ms). Lets the cockpit flag an agent whose
+   *  injected auth cookie is past its one-week validity (invariant 33). */
+  spawnAt?: number;
+  /** The `claude` binary version at that real spawn, to flag an agent still on
+   *  an older binary than the one now installed. Null when it couldn't be read. */
+  spawnClaudeVer?: string | null;
 }
 
 /**
@@ -82,7 +100,7 @@ export function isMirrored(c: Channel): boolean {
  * only resume its own agents" — which broke any multi-step remote exchange
  * (the holder's first resume ran; the browser's next sync wiped the owner). Same
  * loss as `profile`/`parent` before they were listed here. */
-const SERVER_OWNED = ["cwd", "branch", "repo", "telegram", "profile", "model", "effort", "parent", "home", "createdByPeer"] as const;
+const SERVER_OWNED = ["cwd", "branch", "repo", "telegram", "profile", "model", "effort", "parent", "home", "createdByPeer", "spawnFp", "spawnAt", "spawnClaudeVer"] as const;
 
 /**
  * Pure: is this channel the environment's home base — pinned and never closable?
