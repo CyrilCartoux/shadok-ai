@@ -29,7 +29,8 @@
 #           Shadok-AI" delivery is one, and on a public repo anyone can open
 #           one), a conflicted PR, or an AUTHOR OUTSIDE THE MERGE WHITELIST.
 #           The human decides on these; the loop can only report them. Print
-#           them only when their state CHANGED, or a single stuck PR wakes the
+#           them only when their REASON changed (never on a mergeStateStatus
+#           recomputation, see the awk below), or a single stuck PR wakes the
 #           agent every minute forever to answer "not mine" — which is exactly
 #           what happened at a one-minute cadence.
 #
@@ -85,7 +86,17 @@ printf '%s\n' "$rows" | awk -F'\t' -v state="$state_file" '
                         : ($4 == "conflict" ? "conflict" \
                            : "@" $5 " is not in the merge whitelist"))
                  tell[$2] = sprintf("%s %s (%s, awaiting a human) — %s", $2, $3, why, $6)
-                 seen = seen sprintf("%s=%s%s\n", $2, $3, $4) }
+                 # The key is the PR and its REASON — deliberately NOT its
+                 # mergeStateStatus. GitHub recomputes that field on its own and
+                 # serves `UNKNOWN` while it does, so a status in the key made
+                 # the same fork alternate UNKNOWN/UNSTABLE and re-announce
+                 # itself every few minutes: four wake-ups for #315 in one
+                 # evening, each one re-deriving the same "awaiting a human".
+                 # Nothing is lost by dropping it, because the loop may not act
+                 # on ANY of these whatever their status — the reason is the
+                 # whole news, and a reason that really changes (a fork that
+                 # starts conflicting) still changes $4.
+                 seen = seen sprintf("%s=%s\n", $2, $4) }
   END {
     # A watched PR is news the first time it is seen and whenever its state
     # moves; unchanged, it stays silent.
