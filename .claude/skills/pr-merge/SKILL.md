@@ -152,8 +152,8 @@ treatment:
   Shadok-AI" delivery is one, and on a public repo anyone can open one), a
   **conflicted** PR, or an **author outside the merge whitelist** (entry filter,
   point 3). The loop never merges these; a human decides. They are printed
-  **only when their state changed**, tracked in
-  `~/.shadok-ai/checks/pr-open.state`.
+  **only when their REASON changes** — fork becoming conflicted, say — tracked
+  in `~/.shadok-ai/checks/pr-open.state` as `#<number>=<reason>`.
 
 That split exists because both extremes were tried and both were wrong. Printing
 everything meant one stuck PR woke the agent every minute, forever, to answer
@@ -168,6 +168,15 @@ the LLM was woken every five minutes to re-derive the same refusal and print
 `NOTHING TO SHOW`. The lesson is the general one: a guard that does not apply
 the skill's own entry filter wakes the agent for work the agent is forbidden to
 do, and the cost is paid every slot until someone notices.
+
+That key deliberately leaves out `mergeStateStatus`. GitHub recomputes that
+field on its own and serves `UNKNOWN` while it does, so a status in the key made
+the same fork alternate `UNKNOWN`/`UNSTABLE` and re-announce itself every few
+minutes — four wake-ups for #315 in one evening, each re-deriving the same
+"awaiting a human". Nothing is lost by dropping it: the loop may not act on a
+TELL whatever its status, so the reason IS the news. Proven with a `gh` stub and
+a CONTROL — the old script spoke on all four status flips, the new one speaks
+once and still speaks when the reason really changes.
 
 State is rewritten on every pass, including for PRs that left the list: a PR
 reopened later must be announced again, not swallowed because it was seen once.
